@@ -2229,11 +2229,6 @@ atlag_nyugdij_brutto_fc/brutto_berek_df[brutto_berek_df$Kor==66,][1,3:40]
 
 
 
-Help a kniteléshez:
-chunk elrejtése knitelésénél: ```{r, results='hide', fig.show='hide'}
-
-
-
 
 
 
