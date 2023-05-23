@@ -1,0 +1,2237 @@
+---
+title: "LeeCarter"
+author: "Schmall Róbert"
+output:
+  word_document: default
+  html_document: default
+---
+
+1. lépés: Csomagok betöltése
+```{r}
+ library(readr)
+ library(ggplot2)
+ library(demography)
+ library(readxl)
+ library(forecast)
+ library(gganimate)
+ library(scales)
+ library(gifski)
+```
+
+2. lépés: Adatok beolvasása
+```{r}
+ #halandósághoz
+ Deaths_1x1 <- read.csv("F:/egyetem/orak/9/biztmat/szakszem/modell/Deaths_1x1.txt", sep="")
+ Exposures_1x1 <- read.csv("F:/egyetem/orak/9/biztmat/szakszem/modell/Exposures_1x1.txt", sep="")
+ 
+ #termékenységhez
+ HUNbirthsRR <- read.csv("F:/egyetem/orak/9/biztmat/szakszem/modell/HUNbirthsRR.txt", sep="")
+ HUNexposRR <- read.csv("F:/egyetem/orak/9/biztmat/szakszem/modell/HUNexposRR.txt", sep="")
+ #migrációhoz - nincs benne
+ 
+ #makró mutatók
+ gdp <-  read_excel("F:/egyetem/orak/9/biztmat/szakszem/modell/GM-GDP per capita - Dataset - v27.xlsx", 
+    sheet = "data-for-countries-etc-by-year")
+ 
+ #népesség - kezdeti kitettségek
+ #Population <-  read.csv("F:/egyetem/orak/9/biztmat/szakszem/modell/Population.txt", sep="")
+
+```
+
+3.1. lépés: Adatok tisztítása
+
+```{r}
+#Population2020 <- Population[Population$Year == 2020,]
+#Population2020 <- Population2020[as.numeric(Population2020$Age) <= 100,]
+#Population2020 <- na.omit(Population2020)
+#
+#Population2020_male <- Population2020$Male
+#Population2020_female <- Population2020$Female
+
+
+#gdp <- GM_GDP_per_capita_Dataset_v27 
+#ez akkor szükséges, ha nem az előző dobozban olvastuk be az adatokat, hanem import dataset-tel és a fájl nevével olvastuk be a gdp-s adatokat
+
+#halálozás - total - ez nem kell csak ebből indultunk ki
+
+ Deaths_1x1$Age <- as.numeric(Deaths_1x1$Age)
+ Deaths_1x1 <- Deaths_1x1[Deaths_1x1$Age<=100, ]
+ Deaths_1x1 <- na.omit(Deaths_1x1)
+ Exposures_1x1$Age <- as.numeric(Exposures_1x1$Age)
+ Exposures_1x1 <- Exposures_1x1[Exposures_1x1$Age<=100, ]
+ Exposures_1x1 <- na.omit(Exposures_1x1)
+ 
+ Deaths_1x1$mxt <- Deaths_1x1$Total/Exposures_1x1$Total
+ mxt <- matrix(Deaths_1x1$mxt, nrow=101, ncol=2020-1950+1)
+ Ext <- matrix(Exposures_1x1$Total, nrow=101, ncol=2020-1950+1)
+ magyar_hal <- demogdata(mxt, Ext, 0:100, 1950:2020, "mortality", "Hungary", "Total")
+ 
+ 
+ 
+#halálozás - férfi
+ 
+ Deaths_1x1$mxt_male_teny <- Deaths_1x1$Male/Exposures_1x1$Male
+ mxt_male_teny <- matrix(Deaths_1x1$mxt_male_teny, nrow=101, ncol=2020-1950+1)
+ Ext_male_teny <- matrix(Exposures_1x1$Male, nrow=101, ncol=2020-1950+1)
+ magyar_hal_male <- demogdata(mxt_male_teny, Ext_male_teny, ages = 0:100, years = 1950:2020, "mortality", "Hungary", "Male")
+ 
+ 
+ 
+ #halálozás - női
+ 
+ Deaths_1x1$mxt_female_teny <- Deaths_1x1$Female/Exposures_1x1$Female
+ mxt_female_teny <- matrix(Deaths_1x1$mxt_female_teny, nrow=101, ncol=2020-1950+1)
+ Ext_female_teny <- matrix(Exposures_1x1$Female, nrow=101, ncol=2020-1950+1)
+ magyar_hal_female <- demogdata(mxt_female_teny, Ext_female_teny, 0:100, 1950:2020, "mortality", "Hungary", "Female")
+ 
+ 
+ 
+ 
+#termékenység
+
+ HUNbirthsRR$Age[HUNbirthsRR$Age == "12-"] <- 12
+ HUNbirthsRR$Age[HUNbirthsRR$Age == "55+"] <- 55
+ HUNbirthsRR$Age <- as.numeric(HUNbirthsRR$Age)
+ HUNexposRR$Age <- as.numeric(HUNexposRR$Age)
+ 
+ #nagyon sok üres cella van a termékenységi adatok (korok szerinti) szélein, ezekből egy részét levágjuk, mert nem lehet felhasználni, de ahol csak néhány év adata hiányzik, ott interpoláljuk majd később levágás helyett
+ #az adatok így 14-50 évesekre vonatkoznak majd a modellben
+ 
+ 
+ HUNbirthsRR <- HUNbirthsRR[HUNbirthsRR$Age > 13,]
+ HUNbirthsRR <- HUNbirthsRR[HUNbirthsRR$Age < 51,]
+ HUNexposRR <- HUNexposRR[HUNexposRR$Age > 13,]
+ HUNexposRR <- HUNexposRR[HUNexposRR$Age < 51,]
+ 
+ HUNbirthsRR <- na.omit(HUNbirthsRR)
+ HUNexposRR <- na.omit(HUNexposRR)
+
+ 
+ HUNbirthsRR$tfr <- HUNbirthsRR$Total/HUNexposRR$Exposure
+ tfr <- matrix(HUNbirthsRR$tfr, nrow=50-14+1, ncol=2020-1950+1)
+ Ext <- matrix(HUNexposRR$Exposure, nrow=50-14+1, ncol=2020-1950+1)
+ magyar_term <- demogdata(tfr, Ext, 14:50, 1950:2020, "fertility", "Hungary", "Total")
+ 
+```
+
+3.2. Lépés: Állítsuk be hol vágjuk el az adatokat: melyik intervallum lesz a tesztelő
+```{r}
+#a férfi-női halandóságra nem indokolt különböző teszt intervallumokat alkalmazni, de a halálozás és a termékenység közti trendbeli különbségek indokolttá teszik azt 
+
+vagas_hal = 2010
+vagas_term = 2015
+felso = 2020
+
+```
+
+3.3. Lépés: Makró adatok tisztítása
+```{r}
+gdp <- gdp[gdp$name == "Hungary", ]
+gdp <- gdp[gdp$time >= 1950, ]
+
+
+#ezeket vegül nem használtuk fel
+#gdp_test <-gdp[gdp$time <= felso_hal, ]
+#gdp_test <-gdp[gdp$time > vagas_hal, ]
+
+
+
+gdp[gdp$time == 2050, 6] <- 2.12 #az 2050-es becslés hiányzik
+
+
+#csak 2050-ig tartalmaz becsléseket, az utolsó pár évben konstans, azt a trendet visszük tovább feltételezve, hogy ez így marad
+# (más előrejelzések hasonlóak-e? -> még meg kéne nézni)
+
+gdp_extra <- gdp[1:10,]
+gdp_extra$time <- 2051:2060
+gdp_extra$`GDP per capita growth (%)` <- rep(2.12, 10)
+gdp_extra$`Income per person` <- rep(NA, 10)
+gdp_extra$`GDP total` <- rep(NA, 10)
+
+gdp <- rbind(gdp, gdp_extra)
+
+gdp1950 <-  gdp
+gdp1960 <-  gdp[gdp$time >= 1960, ]
+gdp1970 <-  gdp[gdp$time >= 1970, ]
+gdp1980 <-  gdp[gdp$time >= 1980, ]
+gdp1990 <-  gdp[gdp$time >= 1990, ]
+gdp2000 <-  gdp[gdp$time >= 2000, ]
+
+#gdp változás (%) az évek során előrejelzéssel
+ggplot(gdp, aes(x = time, y = `GDP per capita growth (%)`, color = I("blue"))) + geom_line() + theme_light() + labs(title = "Magyar egy főre jutó GDP változása (%)", y = "GDP per fő", x = "Év")
+```
+
+
+3.4. lépés: Halandósági adatok különböző bázisidőszakokra bontása
+
+```{r}
+
+#teszt időszak (halandóságra és termékenységre is)
+
+Deaths_test <- Deaths_1x1[Deaths_1x1$Year>vagas_hal,]
+Deaths_test <- Deaths_test[Deaths_test$Year<=felso,]
+
+Exposures_test <- Exposures_1x1[Exposures_1x1$Year>vagas_hal,]
+Exposures_test <- Exposures_test[Exposures_test$Year<=felso,]
+
+births_test <- HUNbirthsRR[HUNbirthsRR$Year>vagas_term,]
+births_test <- births_test[births_test$Year<=felso,]
+
+t_expos_test <- HUNexposRR[HUNexposRR$Year>vagas_term,]
+t_expos_test <- t_expos_test[t_expos_test$Year<=felso,]
+
+
+
+#bázisidőszakokra bontás (halandóságra és termékenységre is)
+
+
+#1950-
+
+  Deaths_1950 <- Deaths_1x1[Deaths_1x1$Year<=vagas_hal,]
+  Exposures_1950 <- Exposures_1x1[Exposures_1x1$Year<=vagas_hal,]
+  
+  HUNbirthsRR_1950 <- HUNbirthsRR[HUNbirthsRR$Year<=vagas_hal,]
+  HUNexposRR_1950 <- HUNexposRR[HUNexposRR$Year<=vagas_hal,]
+  
+  #férfi halandóság
+  
+  Deaths_1950$mxt_male_1950 <- Deaths_1950$Male/Exposures_1950$Male
+  mxt_male_1950 <- matrix(Deaths_1950$mxt_male_1950, nrow=101, ncol=vagas_hal-1950+1)
+  Ext_male_1950 <- matrix(Exposures_1950$Male, nrow=101, ncol=vagas_hal-1950+1)
+  halandosag_male_1950 <- demogdata(mxt_male_1950, Ext_male_1950, ages = 0:100, years = 1950:vagas_hal, "mortality", "Hungary", "Male")
+
+  #női halandóság
+  
+  Deaths_1950$mxt_female_1950 <- Deaths_1950$Female/Exposures_1950$Female
+  mxt_female_1950 <- matrix(Deaths_1950$mxt_female_1950, nrow=101, ncol=vagas_hal-1950+1)
+  Ext_female_1950 <- matrix(Exposures_1950$Female, nrow=101, ncol=vagas_hal-1950+1)
+  halandosag_female_1950 <- demogdata(mxt_female_1950, Ext_female_1950, ages = 0:100, years = 1950:vagas_hal, "mortality", "Hungary", "Female")
+
+  #termékenység
+ 
+  HUNbirthsRR_1950$tfr <- HUNbirthsRR_1950$Total/HUNexposRR_1950$Exposure
+  tfr_1950 <- matrix(HUNbirthsRR_1950$tfr, nrow=50-14+1, ncol=vagas_term-1950+1)
+  Ext_fert_1950 <- matrix(HUNexposRR_1950$Exposure, nrow=50-14+1, ncol=vagas_term-1950+1)
+  termekenyseg_1950 <- demogdata(tfr_1950, Ext_fert_1950, 14:50, 1950:vagas_term, "fertility", "Hungary", "Total")   
+  
+  
+  
+  
+  
+  
+  
+#1960-
+
+Deaths_1960 <- Deaths_1950[Deaths_1950$Year>=1960,]
+Exposures_1960 <- Exposures_1950[Exposures_1950$Year>=1960,]
+
+HUNbirthsRR_1960 <- HUNbirthsRR_1950[HUNbirthsRR_1950$Year>=1960,]
+HUNexposRR_1960 <- HUNexposRR_1950[HUNexposRR_1950$Year>=1960,]
+
+  #férfi halandóság
+  
+  Deaths_1960$mxt_male_1960 <- Deaths_1960$Male/Exposures_1960$Male
+  mxt_male_1960 <- matrix(Deaths_1960$mxt_male_1960, nrow=101, ncol=vagas_hal-1960+1)
+  Ext_male_1960 <- matrix(Exposures_1960$Male, nrow=101, ncol=vagas_hal-1960+1)
+  halandosag_male_1960 <- demogdata(mxt_male_1960, Ext_male_1960, ages = 0:100, years = 1960:vagas_hal, "mortality", "Hungary", "Male")
+
+  #női halandóság
+  
+  Deaths_1960$mxt_female_1960 <- Deaths_1960$Female/Exposures_1960$Female
+  mxt_female_1960 <- matrix(Deaths_1960$mxt_female_1960, nrow=101, ncol=vagas_hal-1960+1)
+  Ext_female_1960 <- matrix(Exposures_1960$Female, nrow=101, ncol=vagas_hal-1960+1)
+  halandosag_female_1960 <- demogdata(mxt_female_1960, Ext_female_1960, ages = 0:100, years = 1960:vagas_hal, "mortality", "Hungary", "Female")
+
+  #termékenység
+ 
+  HUNbirthsRR_1960$tfr <- HUNbirthsRR_1960$Total/HUNexposRR_1960$Exposure
+  tfr_1960 <- matrix(HUNbirthsRR_1960$tfr, nrow=50-14+1, ncol=vagas_term-1960+1)
+  Ext_fert_1960 <- matrix(HUNexposRR_1960$Exposure, nrow=50-14+1, ncol=vagas_term-1960+1)
+  termekenyseg_1960 <- demogdata(tfr_1960, Ext_fert_1960, 14:50, 1960:vagas_term, "fertility", "Hungary", "Total")   
+
+  
+  
+  
+  
+  
+  
+#1970-
+
+Deaths_1970 <- Deaths_1950[Deaths_1950$Year>=1970,]
+Exposures_1970 <- Exposures_1950[Exposures_1950$Year>=1970,]
+
+HUNbirthsRR_1970 <- HUNbirthsRR_1950[HUNbirthsRR_1950$Year>=1970,]
+HUNexposRR_1970 <- HUNexposRR_1950[HUNexposRR_1950$Year>=1970,]
+
+  #férfi halandóság
+  
+  Deaths_1970$mxt_male_1970 <- Deaths_1970$Male/Exposures_1970$Male
+  mxt_male_1970 <- matrix(Deaths_1970$mxt_male_1970, nrow=101, ncol=vagas_hal-1970+1)
+  Ext_male_1970 <- matrix(Exposures_1970$Male, nrow=101, ncol=vagas_hal-1970+1)
+  halandosag_male_1970 <- demogdata(mxt_male_1970, Ext_male_1970, ages = 0:100, years = 1970:vagas_hal, "mortality", "Hungary", "Male")
+
+  #női halandóság
+  
+  Deaths_1970$mxt_female_1970 <- Deaths_1970$Female/Exposures_1970$Female
+  mxt_female_1970 <- matrix(Deaths_1970$mxt_female_1970, nrow=101, ncol=vagas_hal-1970+1)
+  Ext_female_1970 <- matrix(Exposures_1970$Female, nrow=101, ncol=vagas_hal-1970+1)
+  halandosag_female_1970 <- demogdata(mxt_female_1970, Ext_female_1970, ages = 0:100, years = 1970:vagas_hal, "mortality", "Hungary", "Female")
+
+  #termékenység
+ 
+  HUNbirthsRR_1970$tfr <- HUNbirthsRR_1970$Total/HUNexposRR_1970$Exposure
+  tfr_1970 <- matrix(HUNbirthsRR_1970$tfr, nrow=50-14+1, ncol=vagas_term-1970+1)
+  Ext_fert_1970 <- matrix(HUNexposRR_1970$Exposure, nrow=50-14+1, ncol=vagas_term-1970+1)
+  termekenyseg_1970 <- demogdata(tfr_1970, Ext_fert_1970, 14:50, 1970:vagas_term, "fertility", "Hungary", "Total")   
+
+  
+  
+  
+  
+  
+#1980-
+
+Deaths_1980 <- Deaths_1950[Deaths_1950$Year>=1980,]
+Exposures_1980 <- Exposures_1950[Exposures_1950$Year>=1980,]
+
+HUNbirthsRR_1980 <- HUNbirthsRR_1950[HUNbirthsRR_1950$Year>=1980,]
+HUNexposRR_1980 <- HUNexposRR_1950[HUNexposRR_1950$Year>=1980,]
+
+  #férfi halandóság
+  
+  Deaths_1980$mxt_male_1980 <- Deaths_1980$Male/Exposures_1980$Male
+  mxt_male_1980 <- matrix(Deaths_1980$mxt_male_1980, nrow=101, ncol=vagas_hal-1980+1)
+  Ext_male_1980 <- matrix(Exposures_1980$Male, nrow=101, ncol=vagas_hal-1980+1)
+  halandosag_male_1980 <- demogdata(mxt_male_1980, Ext_male_1980, ages = 0:100, years = 1980:vagas_hal, "mortality", "Hungary", "Male")
+
+  #női halandóság
+  
+  Deaths_1980$mxt_female_1980 <- Deaths_1980$Female/Exposures_1980$Female
+  mxt_female_1980 <- matrix(Deaths_1980$mxt_female_1980, nrow=101, ncol=vagas_hal-1980+1)
+  Ext_female_1980 <- matrix(Exposures_1980$Female, nrow=101, ncol=vagas_hal-1980+1)
+  halandosag_female_1980 <- demogdata(mxt_female_1980, Ext_female_1980, ages = 0:100, years = 1980:vagas_hal, "mortality", "Hungary", "Female")
+
+  #termékenység
+ 
+  HUNbirthsRR_1980$tfr <- HUNbirthsRR_1980$Total/HUNexposRR_1980$Exposure
+  tfr_1980 <- matrix(HUNbirthsRR_1980$tfr, nrow=50-14+1, ncol=vagas_term-1980+1)
+  Ext_fert_1980 <- matrix(HUNexposRR_1980$Exposure, nrow=50-14+1, ncol=vagas_term-1980+1)
+  termekenyseg_1980 <- demogdata(tfr_1980, Ext_fert_1980, 14:50, 1980:vagas_term, "fertility", "Hungary", "Total")    
+
+  
+  
+  
+#1990-
+
+Deaths_1990 <- Deaths_1950[Deaths_1950$Year>=1990,]
+Exposures_1990 <- Exposures_1950[Exposures_1950$Year>=1990,]
+
+HUNbirthsRR_1990  <- HUNbirthsRR_1950[HUNbirthsRR_1950$Year>=1990,]
+HUNexposRR_1990 <- HUNexposRR_1950[HUNexposRR_1950$Year>=1990,]
+
+  #férfi halandóság
+  
+  Deaths_1990$mxt_male_1990 <- Deaths_1990$Male/Exposures_1990$Male
+  mxt_male_1990 <- matrix(Deaths_1990$mxt_male_1990, nrow=101, ncol=vagas_hal-1990+1)
+  Ext_male_1990 <- matrix(Exposures_1990$Male, nrow=101, ncol=vagas_hal-1990+1)
+  halandosag_male_1990 <- demogdata(mxt_male_1990, Ext_male_1990, ages = 0:100, years = 1990:vagas_hal, "mortality", "Hungary", "Male")
+
+  #női halandóság
+  
+  Deaths_1990$mxt_female_1990 <- Deaths_1990$Female/Exposures_1990$Female
+  mxt_female_1990 <- matrix(Deaths_1990$mxt_female_1990, nrow=101, ncol=vagas_hal-1990+1)
+  Ext_female_1990 <- matrix(Exposures_1990$Female, nrow=101, ncol=vagas_hal-1990+1)
+  halandosag_female_1990 <- demogdata(mxt_female_1990, Ext_female_1990, ages = 0:100, years = 1990:vagas_hal, "mortality", "Hungary", "Female")
+
+  #termékenység
+ 
+  HUNbirthsRR_1990$tfr <- HUNbirthsRR_1990$Total/HUNexposRR_1990$Exposure
+  tfr_1990 <- matrix(HUNbirthsRR_1990$tfr, nrow=50-14+1, ncol=vagas_term-1990+1)
+  Ext_fert_1990 <- matrix(HUNexposRR_1990$Exposure, nrow=50-14+1, ncol=vagas_term-1990+1)
+  termekenyseg_1990 <- demogdata(tfr_1990, Ext_fert_1990, 14:50, 1990:vagas_term, "fertility", "Hungary", "Total") 
+
+  
+  
+#2000-
+
+Deaths_2000 <- Deaths_1950[Deaths_1950$Year>=2000,]
+Exposures_2000 <- Exposures_1950[Exposures_1950$Year>=2000,]
+
+HUNbirthsRR_2000  <- HUNbirthsRR_1950[HUNbirthsRR_1950$Year>=2000,]
+HUNexposRR_2000 <- HUNexposRR_1950[HUNexposRR_1950$Year>=2000,]
+
+  #férfi halandóság
+  
+  Deaths_2000$mxt_male_2000 <- Deaths_2000$Male/Exposures_2000$Male
+  mxt_male_2000 <- matrix(Deaths_2000$mxt_male_2000, nrow=101, ncol=vagas_hal-2000+1)
+  Ext_male_2000 <- matrix(Exposures_2000$Male, nrow=101, ncol=vagas_hal-2000+1)
+  halandosag_male_2000 <- demogdata(mxt_male_2000, Ext_male_2000, ages = 0:100, years = 2000:vagas_hal, "mortality", "Hungary", "Male")
+
+  #női halandóság
+  
+  Deaths_2000$mxt_female_2000 <- Deaths_2000$Female/Exposures_2000$Female
+  mxt_female_2000 <- matrix(Deaths_2000$mxt_female_2000, nrow=101, ncol=vagas_hal-2000+1)
+  Ext_female_2000 <- matrix(Exposures_2000$Female, nrow=101, ncol=vagas_hal-2000+1)
+  halandosag_female_2000 <- demogdata(mxt_female_2000, Ext_female_2000, ages = 0:100, years = 2000:vagas_hal, "mortality", "Hungary", "Female")
+
+  #termékenység
+ 
+  HUNbirthsRR_2000$tfr <- HUNbirthsRR_2000$Total/HUNexposRR_2000$Exposure
+  tfr_2000 <- matrix(HUNbirthsRR_2000$tfr, nrow=50-14+1, ncol=vagas_term-2000+1)
+  Ext_fert_2000 <- matrix(HUNexposRR_2000$Exposure, nrow=50-14+1, ncol=vagas_term-2000+1)
+  termekenyseg_2000 <- demogdata(tfr_2000, Ext_fert_2000, 14:50, 2000:vagas_term, "fertility", "Hungary", "Total") 
+
+
+```
+
+
+
+
+4.1. lépés: Lee Carter modell
+
+```{r} 
+#Lee Carter
+
+#a teljesek csak a modell felépítésénél szolgáltak segítségül, amúgy nem mérvadóak
+
+##teljesek - halandóság
+ LC <- lca(magyar_hal, interpolate = TRUE)
+ LC_male <- lca(magyar_hal_male, interpolate = TRUE)
+ LC_female <- lca(magyar_hal_female, interpolate = TRUE)
+# 
+##teljesek - termékenység
+ LC_term <- lca(magyar_term, interpolate = TRUE)
+ 
+ 
+ 
+ #ez egy ötlet arra, hogy mi lenne ha nem az utolsó x év lenne a tesztelő, hanem egy véletlen minta az összesből -> egyenlőre nem használjuk, mert azt még nem küszöböltük ki, hogy így a modellek nem lennének összehasonlíthatók
+ 
+ #bazis <- sample(1950:2020, 60, replace = FALSE)
+ #test <- setdiff(1950:2020, bazis)
+
+ 
+ 
+ #bázisolt
+ LC_male_1950 <- lca(halandosag_male_1950, interpolate = TRUE)
+ LC_female_1950 <- lca(halandosag_female_1950, interpolate = TRUE)
+ LC_term_1950 <- lca(termekenyseg_1950, interpolate = TRUE)
+ 
+ LC_male_1960 <- lca(halandosag_male_1960, interpolate = TRUE)
+ LC_female_1960 <- lca(halandosag_female_1960, interpolate = TRUE)
+ LC_term_1960 <- lca(termekenyseg_1960, interpolate = TRUE)
+ 
+ LC_male_1970 <- lca(halandosag_male_1970, interpolate = TRUE)
+ LC_female_1970 <- lca(halandosag_female_1970, interpolate = TRUE)
+ LC_term_1970 <- lca(termekenyseg_1970, interpolate = TRUE)
+ 
+ LC_male_1980 <- lca(halandosag_male_1980, interpolate = TRUE)
+ LC_female_1980 <- lca(halandosag_female_1980, interpolate = TRUE)
+ LC_term_1980 <- lca(termekenyseg_1980, interpolate = TRUE)
+ 
+ LC_male_1990 <- lca(halandosag_male_1990, interpolate = TRUE)
+ LC_female_1990 <- lca(halandosag_female_1990, interpolate = TRUE)
+ LC_term_1990 <- lca(termekenyseg_1990, interpolate = TRUE)
+ 
+ LC_male_2000 <- lca(halandosag_male_2000, interpolate = TRUE)
+ LC_female_2000 <- lca(halandosag_female_2000, interpolate = TRUE)
+ LC_term_2000 <- lca(termekenyseg_2000, interpolate = TRUE)
+ 
+
+ 
+```
+
+4.2. lépés: Lee Carter komponenseire bontása (ábrák)
+
+```{r}
+
+ plot(LC)
+ plot(LC_male)
+ plot(LC_female)
+ 
+ plot(LC_term)
+ 
+ 
+ plot(LC_male_1950)
+ plot(LC_female_1950)
+ plot(LC_term_1950)
+
+ plot(LC_male_1960)
+ plot(LC_female_1960)
+ plot(LC_term_1960)
+ 
+ plot(LC_male_1970)
+ plot(LC_female_1970)
+ plot(LC_term_1970)
+ 
+ plot(LC_male_1980)
+ plot(LC_female_1980)
+ plot(LC_term_1980)
+ 
+ plot(LC_male_1990)
+ plot(LC_female_1990)
+ plot(LC_term_1990)
+
+ plot(LC_male_2000)
+ plot(LC_female_2000)
+ plot(LC_term_2000)
+ 
+```
+
+4.3. lépés: További ábrák (reziduálisok)
+
+```{r}
+ 
+ #image(LC$residuals$y)
+ #image(LC_male$residuals$y)
+ #image(LC_female$residuals$y)
+ #
+ #image(LC_term$residuals$y)
+ 
+ 
+ image(LC_male_1950$residuals$y)
+ image(LC_female_1950$residuals$y)
+ image(LC_term_1950$residuals$y)
+ 
+ image(LC_male_1960$residuals$y)
+ image(LC_female_1960$residuals$y)
+ image(LC_term_1960$residuals$y)
+ 
+ image(LC_male_1970$residuals$y)
+ image(LC_female_1970$residuals$y)
+ image(LC_term_1970$residuals$y)
+ 
+ image(LC_male_1980$residuals$y)
+ image(LC_female_1980$residuals$y)
+ image(LC_term_1980$residuals$y)
+ 
+ image(LC_male_1990$residuals$y)
+ image(LC_female_1990$residuals$y)
+ image(LC_term_1990$residuals$y)
+ 
+ image(LC_male_2000$residuals$y)
+ image(LC_female_2000$residuals$y)
+ image(LC_term_2000$residuals$y)
+
+```
+
+
+
+5.1. lépés: ARIMA illesztés GDP-t felhasználva
+
+```{r}
+#GDP-vel
+#módszer: 
+  ##  1. megnézni milyen ARIMA 
+  ##  2. stacionáriussá tenni, ha kell (diff vagy diffdiff)
+  ##  3. lm modellbe beletenni a szükséges arima tagokkal (amiket szintén diffeztünk ha kellett) és a gdp growth rate-tel
+  ##  4. summary-ban megnézni, hogy szignifikáns-e (note:n em igazán azok)
+
+#auto.arima(LC$kt)
+#LC_minden_diff <- lm(diff(LC$kt) ~ c(diff(LC$kt)[-1], NA) + c(diff(LC$kt)[-2:-1], NA, NA) + c(diff(LC$kt)[-3:-1], NA, NA, NA) + gdp[gdp$time <= #felso, ]$`GDP per capita growth (%)`[-1])
+#summary(LC_minden_diff)
+#
+#
+#auto.arima(LC_male$kt)
+#LC_male_diff <- lm(diff(LC_male$kt) ~ c(diff(LC_male$kt)[-1], NA) + c(diff(LC_male$kt)[-2:-1], NA, NA) + c(diff(LC_male$kt)[-3:-1], NA, NA, NA) + #gdp[gdp$time <= felso, ]$`GDP per capita growth (%)`[-1])
+#summary(LC_male_diff)
+#
+#auto.arima(LC_female$kt)
+#LC_female_diff <- lm(diff(LC_female$kt) ~ c(diff(LC_female$kt)[-1], NA) + c(diff(LC_female$kt)[-2:-1], NA, NA) + c(diff(LC_female$kt)[-3:-1], NA, #NA, NA) + gdp[gdp$time <= felso, ]$`GDP per capita growth (%)`[-1])
+#summary(LC_female_diff)
+#
+#auto.arima(LC_term$kt)
+#LC_term_diff <- lm(diff(LC_term$kt) ~  gdp[gdp$time <= felso, ]$`GDP per capita growth (%)`[-1])
+#summary(LC_term_diff)
+
+
+#Note: az egyszerűség kedvéért a termékenység esetében is qx-szel jelöltük (ez ott a szülési valószínűségnek felel meg)
+
+#1950
+
+LC_male_1950_autoarima <- auto.arima(LC_male_1950$kt)
+LC_male_1950_gdp <- Arima(LC_male_1950$kt, order = c(LC_male_1950_autoarima$arma[1], LC_male_1950_autoarima$arma[6], LC_male_1950_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1950[gdp1950$time <= vagas_hal, ]$`GDP per capita growth (%)`)
+LC_male_1950_gdp_fc <- forecast(LC_male_1950_gdp, h = 2060-vagas_hal, xreg = gdp1950[gdp1950$time > vagas_hal, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_male_1950_gdp <- outer(LC_male_1950$ax, rep(1, 2060-vagas_hal)) + outer(LC_male_1950$bx, LC_male_1950_gdp_fc$mean)
+qx_LC_male_1950_gdp <- 1 - exp(-exp(lmxt_fc_LC_male_1950_gdp))
+
+
+LC_female_1950_autoarima <- auto.arima(LC_female_1950$kt)
+LC_female_1950_gdp <- Arima(LC_female_1950$kt, order = c(LC_female_1950_autoarima$arma[1], LC_female_1950_autoarima$arma[6], LC_female_1950_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1950[gdp1950$time <= vagas_hal, ]$`GDP per capita growth (%)`)
+LC_female_1950_gdp_fc <- forecast(LC_female_1950_gdp, h = 2060-vagas_hal, xreg = gdp1950[gdp1950$time > vagas_hal, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_female_1950_gdp <- outer(LC_female_1950$ax, rep(1, 2060-vagas_hal)) + outer(LC_female_1950$bx, LC_female_1950_gdp_fc$mean)
+qx_LC_female_1950_gdp <- 1 - exp(-exp(lmxt_fc_LC_female_1950_gdp))
+
+
+LC_term_1950_autoarima <- auto.arima(LC_term_1950$kt)
+LC_term_1950_gdp <- Arima(LC_term_1950$kt, order = c(LC_term_1950_autoarima$arma[1], LC_term_1950_autoarima$arma[6], LC_term_1950_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1950[gdp1950$time <= vagas_term, ]$`GDP per capita growth (%)`)
+LC_term_1950_gdp_fc <- forecast(LC_term_1950_gdp, h = 2060-vagas_term, xreg = gdp1950[gdp1950$time > vagas_term, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_term_1950_gdp <- outer(LC_term_1950$ax, rep(1, 2060-vagas_term)) + outer(LC_term_1950$bx, LC_term_1950_gdp_fc$mean)
+qx_LC_term_1950_gdp <- 1 - exp(-exp(lmxt_fc_LC_term_1950_gdp))
+
+
+
+#1960
+
+LC_male_1960_autoarima <- auto.arima(LC_male_1960$kt)
+LC_male_1960_gdp <- Arima(LC_male_1960$kt, order = c(LC_male_1960_autoarima$arma[1], LC_male_1960_autoarima$arma[6], LC_male_1960_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1960[gdp1960$time <= vagas_hal, ]$`GDP per capita growth (%)`)
+LC_male_1960_gdp_fc <- forecast(LC_male_1960_gdp, h = 2060-vagas_hal, xreg = gdp1960[gdp1960$time > vagas_hal, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_male_1960_gdp <- outer(LC_male_1960$ax, rep(1, 2060-vagas_hal)) + outer(LC_male_1960$bx, LC_male_1960_gdp_fc$mean)
+qx_LC_male_1960_gdp <- 1 - exp(-exp(lmxt_fc_LC_male_1960_gdp))
+
+
+LC_female_1960_autoarima <- auto.arima(LC_female_1960$kt)
+LC_female_1960_gdp <- Arima(LC_female_1960$kt, order = c(LC_female_1960_autoarima$arma[1], LC_female_1960_autoarima$arma[6], LC_female_1960_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1960[gdp1960$time <= vagas_hal, ]$`GDP per capita growth (%)`)
+LC_female_1960_gdp_fc <- forecast(LC_female_1960_gdp, h = 2060-vagas_hal, xreg = gdp1960[gdp1960$time > vagas_hal, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_female_1960_gdp <- outer(LC_female_1960$ax, rep(1, 2060-vagas_hal)) + outer(LC_female_1960$bx, LC_female_1960_gdp_fc$mean)
+qx_LC_female_1960_gdp <- 1 - exp(-exp(lmxt_fc_LC_female_1960_gdp))
+
+
+LC_term_1960_autoarima <- auto.arima(LC_term_1960$kt)
+LC_term_1960_gdp <- Arima(LC_term_1960$kt, order = c(LC_term_1960_autoarima$arma[1], LC_term_1960_autoarima$arma[6], LC_term_1960_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1960[gdp1960$time <= vagas_term, ]$`GDP per capita growth (%)`)
+LC_term_1960_gdp_fc <- forecast(LC_term_1960_gdp, h = 2060-vagas_term, xreg = gdp1960[gdp1960$time > vagas_term, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_term_1960_gdp <- outer(LC_term_1960$ax, rep(1, 2060-vagas_term)) + outer(LC_term_1960$bx, LC_term_1960_gdp_fc$mean)
+qx_LC_term_1960_gdp <- 1 - exp(-exp(lmxt_fc_LC_term_1960_gdp))
+
+
+#1970
+
+LC_male_1970_autoarima <- auto.arima(LC_male_1970$kt)
+LC_male_1970_gdp <- Arima(LC_male_1970$kt, order = c(LC_male_1970_autoarima$arma[1], LC_male_1970_autoarima$arma[6], LC_male_1970_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1970[gdp1970$time <= vagas_hal, ]$`GDP per capita growth (%)`)
+LC_male_1970_gdp_fc <- forecast(LC_male_1970_gdp, h = 2060-vagas_hal, xreg = gdp1970[gdp1970$time > vagas_hal, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_male_1970_gdp <- outer(LC_male_1970$ax, rep(1, 2060-vagas_hal)) + outer(LC_male_1970$bx, LC_male_1970_gdp_fc$mean)
+qx_LC_male_1970_gdp <- 1 - exp(-exp(lmxt_fc_LC_male_1970_gdp))
+
+
+LC_female_1970_autoarima <- auto.arima(LC_female_1970$kt)
+LC_female_1970_gdp <- Arima(LC_female_1970$kt, order = c(LC_female_1970_autoarima$arma[1], LC_female_1970_autoarima$arma[6], LC_female_1970_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1970[gdp1970$time <= vagas_hal, ]$`GDP per capita growth (%)`)
+LC_female_1970_gdp_fc <- forecast(LC_female_1970_gdp, h = 2060-vagas_hal, xreg = gdp1970[gdp1970$time > vagas_hal, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_female_1970_gdp <- outer(LC_female_1970$ax, rep(1, 2060-vagas_hal)) + outer(LC_female_1970$bx, LC_female_1970_gdp_fc$mean)
+qx_LC_female_1970_gdp <- 1 - exp(-exp(lmxt_fc_LC_female_1970_gdp))
+
+
+LC_term_1970_autoarima <- auto.arima(LC_term_1970$kt)
+LC_term_1970_gdp <- Arima(LC_term_1970$kt, order = c(LC_term_1970_autoarima$arma[1], LC_term_1970_autoarima$arma[6], LC_term_1970_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1970[gdp1970$time <= vagas_term, ]$`GDP per capita growth (%)`)
+LC_term_1970_gdp_fc <- forecast(LC_term_1970_gdp, h = 2060-vagas_term, xreg = gdp1970[gdp1970$time > vagas_term, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_term_1970_gdp <- outer(LC_term_1970$ax, rep(1, 2060-vagas_term)) + outer(LC_term_1970$bx, LC_term_1970_gdp_fc$mean)
+qx_LC_term_1970_gdp <- 1 - exp(-exp(lmxt_fc_LC_term_1970_gdp))
+
+
+#1980
+
+LC_male_1980_autoarima <- auto.arima(LC_male_1980$kt)
+LC_male_1980_gdp <- Arima(LC_male_1980$kt, order = c(LC_male_1980_autoarima$arma[1], LC_male_1980_autoarima$arma[6], LC_male_1980_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1980[gdp1980$time <= vagas_hal, ]$`GDP per capita growth (%)`)
+LC_male_1980_gdp_fc <- forecast(LC_male_1980_gdp, h = 2060-vagas_hal, xreg = gdp1980[gdp1980$time > vagas_hal, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_male_1980_gdp <- outer(LC_male_1980$ax, rep(1, 2060-vagas_hal)) + outer(LC_male_1980$bx, LC_male_1980_gdp_fc$mean)
+qx_LC_male_1980_gdp <- 1 - exp(-exp(lmxt_fc_LC_male_1980_gdp))
+
+
+LC_female_1980_autoarima <- auto.arima(LC_female_1980$kt)
+LC_female_1980_gdp <- Arima(LC_female_1980$kt, order = c(LC_female_1980_autoarima$arma[1], LC_female_1980_autoarima$arma[6], LC_female_1980_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1980[gdp1980$time <= vagas_hal, ]$`GDP per capita growth (%)`)
+LC_female_1980_gdp_fc <- forecast(LC_female_1980_gdp, h = 2060-vagas_hal, xreg = gdp1980[gdp1980$time > vagas_hal, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_female_1980_gdp <- outer(LC_female_1980$ax, rep(1, 2060-vagas_hal)) + outer(LC_female_1980$bx, LC_female_1980_gdp_fc$mean)
+qx_LC_female_1980_gdp <- 1 - exp(-exp(lmxt_fc_LC_female_1980_gdp))
+
+
+LC_term_1980_autoarima <- auto.arima(LC_term_1980$kt)
+LC_term_1980_gdp <- Arima(LC_term_1980$kt, order = c(LC_term_1980_autoarima$arma[1], LC_term_1980_autoarima$arma[6], LC_term_1980_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1980[gdp1980$time <= vagas_term, ]$`GDP per capita growth (%)`)
+LC_term_1980_gdp_fc <- forecast(LC_term_1980_gdp, h = 2060-vagas_term, xreg = gdp1980[gdp1980$time > vagas_term, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_term_1980_gdp <- outer(LC_term_1980$ax, rep(1, 2060-vagas_term)) + outer(LC_term_1980$bx, LC_term_1980_gdp_fc$mean)
+qx_LC_term_1980_gdp <- 1 - exp(-exp(lmxt_fc_LC_term_1980_gdp))
+
+
+#1990
+
+LC_male_1990_autoarima <- auto.arima(LC_male_1990$kt)
+LC_male_1990_gdp <- Arima(LC_male_1990$kt, order = c(LC_male_1990_autoarima$arma[1], LC_male_1990_autoarima$arma[6], LC_male_1990_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1990[gdp1990$time <= vagas_hal, ]$`GDP per capita growth (%)`)
+LC_male_1990_gdp_fc <- forecast(LC_male_1990_gdp, h = 2060-vagas_hal, xreg = gdp1990[gdp1990$time > vagas_hal, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_male_1990_gdp <- outer(LC_male_1990$ax, rep(1, 2060-vagas_hal)) + outer(LC_male_1990$bx, LC_male_1990_gdp_fc$mean)
+qx_LC_male_1990_gdp <- 1 - exp(-exp(lmxt_fc_LC_male_1990_gdp))
+
+
+LC_female_1990_autoarima <- auto.arima(LC_female_1990$kt)
+LC_female_1990_gdp <- Arima(LC_female_1990$kt, order = c(LC_female_1990_autoarima$arma[1], LC_female_1990_autoarima$arma[6], LC_female_1990_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1990[gdp1990$time <= vagas_hal, ]$`GDP per capita growth (%)`)
+LC_female_1990_gdp_fc <- forecast(LC_female_1990_gdp, h = 2060-vagas_hal, xreg = gdp1990[gdp1990$time > vagas_hal, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_female_1990_gdp <- outer(LC_female_1990$ax, rep(1, 2060-vagas_hal)) + outer(LC_female_1990$bx, LC_female_1990_gdp_fc$mean)
+qx_LC_female_1990_gdp <- 1 - exp(-exp(lmxt_fc_LC_female_1990_gdp))
+
+
+LC_term_1990_autoarima <- auto.arima(LC_term_1990$kt)
+LC_term_1990_gdp <- Arima(LC_term_1990$kt, order = c(LC_term_1990_autoarima$arma[1], LC_term_1990_autoarima$arma[6], LC_term_1990_autoarima$arma[2]), include.drift = TRUE, xreg = gdp1990[gdp1990$time <= vagas_term, ]$`GDP per capita growth (%)`)
+LC_term_1990_gdp_fc <- forecast(LC_term_1990_gdp, h = 2060-vagas_term, xreg = gdp1990[gdp1990$time > vagas_term, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_term_1990_gdp <- outer(LC_term_1990$ax, rep(1, 2060-vagas_term)) + outer(LC_term_1990$bx, LC_term_1990_gdp_fc$mean)
+qx_LC_term_1990_gdp <- 1 - exp(-exp(lmxt_fc_LC_term_1990_gdp))
+
+
+
+#2000
+
+LC_male_2000_autoarima <- auto.arima(LC_male_2000$kt)
+LC_male_2000_gdp <- Arima(LC_male_2000$kt, order = c(LC_male_2000_autoarima$arma[1], LC_male_2000_autoarima$arma[6], LC_male_2000_autoarima$arma[2]), include.drift = TRUE, xreg = gdp2000[gdp2000$time <= vagas_hal, ]$`GDP per capita growth (%)`)
+LC_male_2000_gdp_fc <- forecast(LC_male_2000_gdp, h = 2060-vagas_hal, xreg = gdp2000[gdp2000$time > vagas_hal, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_male_2000_gdp <- outer(LC_male_2000$ax, rep(1, 2060-vagas_hal)) + outer(LC_male_2000$bx, LC_male_2000_gdp_fc$mean)
+qx_LC_male_2000_gdp <- 1 - exp(-exp(lmxt_fc_LC_male_2000_gdp))
+
+
+LC_female_2000_autoarima <- auto.arima(LC_female_2000$kt)
+LC_female_2000_gdp <- Arima(LC_female_2000$kt, order = c(LC_female_2000_autoarima$arma[1], LC_female_2000_autoarima$arma[6], LC_female_2000_autoarima$arma[2]), include.drift = TRUE, xreg = gdp2000[gdp2000$time <= vagas_hal, ]$`GDP per capita growth (%)`)
+LC_female_2000_gdp_fc <- forecast(LC_female_2000_gdp, h = 2060-vagas_hal, xreg = gdp2000[gdp2000$time > vagas_hal, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_female_2000_gdp <- outer(LC_female_2000$ax, rep(1, 2060-vagas_hal)) + outer(LC_female_2000$bx, LC_female_2000_gdp_fc$mean)
+qx_LC_female_2000_gdp <- 1 - exp(-exp(lmxt_fc_LC_female_2000_gdp))
+
+
+LC_term_2000_autoarima <- auto.arima(LC_term_2000$kt)
+LC_term_2000_gdp <- Arima(LC_term_2000$kt, order = c(LC_term_2000_autoarima$arma[1], LC_term_2000_autoarima$arma[6], LC_term_2000_autoarima$arma[2]), include.drift = TRUE, xreg = gdp2000[gdp2000$time <= vagas_term, ]$`GDP per capita growth (%)`)
+LC_term_2000_gdp_fc <- forecast(LC_term_2000_gdp, h = 2060-vagas_term, xreg = gdp2000[gdp2000$time > vagas_term, ]$`GDP per capita growth (%)`)
+lmxt_fc_LC_term_2000_gdp <- outer(LC_term_2000$ax, rep(1, 2060-vagas_term)) + outer(LC_term_2000$bx, LC_term_2000_gdp_fc$mean)
+qx_LC_term_2000_gdp <- 1 - exp(-exp(lmxt_fc_LC_term_2000_gdp))
+
+
+
+
+```
+5.2. lépés: GDP magyarázóereje ellenőrzése
+```{r}
+#lényegében egyik esetben sem szignifikáns, nincs magyarázóereje -> használata nem indokolt
+
+summary(LC_male_1950_gdp)
+summary(LC_male_1960_gdp)
+summary(LC_male_1970_gdp)
+summary(LC_male_1980_gdp)
+summary(LC_male_1990_gdp)
+summary(LC_male_2000_gdp)
+
+summary(LC_female_1950_gdp)
+summary(LC_female_1960_gdp)
+summary(LC_female_1970_gdp)
+summary(LC_female_1980_gdp)
+summary(LC_female_1990_gdp)
+summary(LC_female_2000_gdp)
+
+summary(LC_term_1950_gdp)
+summary(LC_term_1960_gdp)
+summary(LC_term_1970_gdp)
+summary(LC_term_1980_gdp)
+summary(LC_term_1990_gdp)
+summary(LC_term_2000_gdp)
+
+```
+
+
+5.2. lépés: ARIMA illesztés (GDP nélkül)
+
+```{r}
+#ARIMA-t illszetünk és meg is becsüljük a qx-eket/termékenységi rátákat minden modellben
+
+#fc_LC_arima <- forecast(auto.arima(LC$kt), h = 40)
+#lmxt_fc_LC_arima <- LC$ax + LC$bx %*% t(fc_LC_arima$mean)
+#qx_LC_arima <- 1 - exp(-exp(lmxt_fc_LC_arima))
+#
+#
+#fc_LC_male_arima <- forecast(auto.arima(LC_male$kt), h = 40)
+#lmxt_fc_LC_male_arima <- LC_male$ax + LC_male$bx %*% t(fc_LC_male_arima$mean)
+#qx_LC_male_arima <- 1 - exp(-exp(lmxt_fc_LC_male_arima))
+#
+#fc_LC_female_arima <- forecast(auto.arima(LC_female$kt), h = 40)
+#lmxt_fc_LC_female_arima <- LC_female$ax + LC_female$bx %*% t(fc_LC_female_arima$mean)
+#qx_LC_female_arima <- 1 - exp(-exp(lmxt_fc_LC_female_arima))
+#
+#fc_LC_term_arima <- forecast(auto.arima(LC_term$kt), h = 40)
+#lmxt_fc_LC_term_arima <- LC_term$ax + LC_term$bx %*% t(fc_LC_term_arima$mean)
+#qx_LC_term_arima <- 1 - exp(-exp(lmxt_fc_LC_term_arima))
+
+
+#1950
+
+fc_LC_male_1950_arima <- forecast(auto.arima(LC_male_1950$kt), h = 2060-vagas_hal)
+lmxt_fc_LC_male_1950_arima <- outer(LC_male_1950$ax, rep(1, 2060-vagas_hal)) + outer(LC_male_1950$bx, fc_LC_male_1950_arima$mean)
+qx_LC_male_1950_arima <- 1 - exp(-exp(lmxt_fc_LC_male_1950_arima))
+
+fc_LC_female_1950_arima <- forecast(auto.arima(LC_female_1950$kt), h = 2060-vagas_hal)
+lmxt_fc_LC_female_1950_arima <- outer(LC_female_1950$ax, rep(1, 2060-vagas_hal)) + outer(LC_female_1950$bx, fc_LC_female_1950_arima$mean)
+qx_LC_female_1950_arima <- 1 - exp(-exp(lmxt_fc_LC_female_1950_arima))
+
+fc_LC_term_1950_arima <- forecast(auto.arima(LC_term_1950$kt), h = 2060-vagas_term)
+lmxt_fc_LC_term_1950_arima <- outer(LC_term_1950$ax, rep(1, 2060-vagas_term)) + outer(LC_term_1950$bx, fc_LC_term_1950_arima$mean)
+qx_LC_term_1950_arima <- 1 - exp(-exp(lmxt_fc_LC_term_1950_arima))
+
+
+
+#1960
+
+fc_LC_male_1960_arima <- forecast(auto.arima(LC_male_1960$kt), h = 2060-vagas_hal)
+lmxt_fc_LC_male_1960_arima <- outer(LC_male_1960$ax, rep(1, 2060-vagas_hal)) + outer(LC_male_1960$bx, fc_LC_male_1960_arima$mean)
+qx_LC_male_1960_arima <- 1 - exp(-exp(lmxt_fc_LC_male_1960_arima))
+
+fc_LC_female_1960_arima <- forecast(auto.arima(LC_female_1960$kt), h = 2060-vagas_hal)
+lmxt_fc_LC_female_1960_arima <- outer(LC_female_1960$ax, rep(1, 2060-vagas_hal)) + outer(LC_female_1960$bx, fc_LC_female_1960_arima$mean)
+qx_LC_female_1960_arima <- 1 - exp(-exp(lmxt_fc_LC_female_1960_arima))
+
+fc_LC_term_1960_arima <- forecast(auto.arima(LC_term_1960$kt), h = 2060-vagas_term)
+lmxt_fc_LC_term_1960_arima <- outer(LC_term_1960$ax, rep(1, 2060-vagas_term)) + outer(LC_term_1960$bx, fc_LC_term_1960_arima$mean)
+qx_LC_term_1960_arima <- 1 - exp(-exp(lmxt_fc_LC_term_1960_arima))
+
+
+
+#1970
+
+fc_LC_male_1970_arima <- forecast(auto.arima(LC_male_1970$kt), h = 2060-vagas_hal)
+lmxt_fc_LC_male_1970_arima <- outer(LC_male_1970$ax, rep(1, 2060-vagas_hal)) + outer(LC_male_1970$bx, fc_LC_male_1970_arima$mean)
+qx_LC_male_1970_arima <- 1 - exp(-exp(lmxt_fc_LC_male_1970_arima))
+
+fc_LC_female_1970_arima <- forecast(auto.arima(LC_female_1970$kt), h = 2060-vagas_hal)
+lmxt_fc_LC_female_1970_arima <- outer(LC_female_1970$ax, rep(1, 2060-vagas_hal)) + outer(LC_female_1970$bx, fc_LC_female_1970_arima$mean)
+qx_LC_female_1970_arima <- 1 - exp(-exp(lmxt_fc_LC_female_1970_arima))
+
+fc_LC_term_1970_arima <- forecast(auto.arima(LC_term_1970$kt), h = 2060-vagas_term)
+lmxt_fc_LC_term_1970_arima <- outer(LC_term_1970$ax, rep(1, 2060-vagas_term)) + outer(LC_term_1970$bx, fc_LC_term_1970_arima$mean)
+qx_LC_term_1970_arima <- 1 - exp(-exp(lmxt_fc_LC_term_1970_arima))
+
+
+
+#1980
+
+fc_LC_male_1980_arima <- forecast(auto.arima(LC_male_1980$kt), h = 2060-vagas_hal)
+lmxt_fc_LC_male_1980_arima <- outer(LC_male_1980$ax, rep(1, 2060-vagas_hal)) + outer(LC_male_1980$bx, fc_LC_male_1980_arima$mean)
+qx_LC_male_1980_arima <- 1 - exp(-exp(lmxt_fc_LC_male_1980_arima))
+
+fc_LC_female_1980_arima <- forecast(auto.arima(LC_female_1980$kt), h = 2060-vagas_hal)
+lmxt_fc_LC_female_1980_arima <- outer(LC_female_1980$ax, rep(1, 2060-vagas_hal)) + outer(LC_female_1980$bx, fc_LC_female_1980_arima$mean)
+qx_LC_female_1980_arima <- 1 - exp(-exp(lmxt_fc_LC_female_1980_arima))
+
+fc_LC_term_1980_arima <- forecast(auto.arima(LC_term_1980$kt), h = 2060-vagas_term)
+lmxt_fc_LC_term_1980_arima <- outer(LC_term_1980$ax, rep(1, 2060-vagas_term)) + outer(LC_term_1980$bx, fc_LC_term_1980_arima$mean)
+qx_LC_term_1980_arima <- 1 - exp(-exp(lmxt_fc_LC_term_1980_arima))
+
+
+
+#1990
+
+fc_LC_male_1990_arima <- forecast(auto.arima(LC_male_1990$kt), h = 2060-vagas_hal)
+lmxt_fc_LC_male_1990_arima <- outer(LC_male_1990$ax, rep(1, 2060-vagas_hal)) + outer(LC_male_1990$bx, fc_LC_male_1990_arima$mean)
+qx_LC_male_1990_arima <- 1 - exp(-exp(lmxt_fc_LC_male_1990_arima))
+
+fc_LC_female_1990_arima <- forecast(auto.arima(LC_female_1990$kt), h = 2060-vagas_hal)
+lmxt_fc_LC_female_1990_arima <- outer(LC_female_1990$ax, rep(1, 2060-vagas_hal)) + outer(LC_female_1990$bx, fc_LC_female_1990_arima$mean)
+qx_LC_female_1990_arima <- 1 - exp(-exp(lmxt_fc_LC_female_1990_arima))
+
+fc_LC_term_1990_arima <- forecast(auto.arima(LC_term_1990$kt), h = 2060-vagas_term)
+lmxt_fc_LC_term_1990_arima <- outer(LC_term_1990$ax, rep(1, 2060-vagas_term)) + outer(LC_term_1990$bx, fc_LC_term_1990_arima$mean)
+qx_LC_term_1990_arima <- 1 - exp(-exp(lmxt_fc_LC_term_1990_arima))
+
+
+
+#2000
+
+fc_LC_male_2000_arima <- forecast(auto.arima(LC_male_2000$kt), h = 2060-vagas_hal)
+lmxt_fc_LC_male_2000_arima <- outer(LC_male_2000$ax, rep(1, 2060-vagas_hal)) + outer(LC_male_2000$bx, fc_LC_male_2000_arima$mean)
+qx_LC_male_2000_arima <- 1 - exp(-exp(lmxt_fc_LC_male_2000_arima))
+
+fc_LC_female_2000_arima <- forecast(auto.arima(LC_female_2000$kt), h = 2060-vagas_hal)
+lmxt_fc_LC_female_2000_arima <- outer(LC_female_2000$ax, rep(1, 2060-vagas_hal)) + outer(LC_female_2000$bx, fc_LC_female_2000_arima$mean)
+qx_LC_female_2000_arima <- 1 - exp(-exp(lmxt_fc_LC_female_2000_arima))
+
+fc_LC_term_2000_arima <- forecast(auto.arima(LC_term_2000$kt), h = 2060-vagas_term)
+lmxt_fc_LC_term_2000_arima <- outer(LC_term_2000$ax, rep(1, 2060-vagas_term)) + outer(LC_term_2000$bx, fc_LC_term_2000_arima$mean)
+qx_LC_term_2000_arima <- 1 - exp(-exp(lmxt_fc_LC_term_2000_arima))
+
+
+
+```
+
+5.3. lépés: Előrejelzés az eredeti modell alapján - ARIMA(0,1,0)
+
+```{r}
+#qx_LC <- 1 - exp(-forecast(LC, h=40)$rate$Total)
+#
+#qx_LC_male <- 1 - exp(-forecast(LC_male, h=40)$rate$Male)
+#qx_LC_female <- 1 - exp(-forecast(LC_female, h=40)$rate$Female)
+#qx_LC_term <- 1 - exp(-forecast(LC_term, h=40)$rate$Total)
+
+#1950
+
+qx_LC_male_1950 <- 1 - exp(-forecast(LC_male_1950, h=2060-vagas_hal)$rate$Male)
+qx_LC_female_1950 <- 1 - exp(-forecast(LC_female_1950, h=2060-vagas_hal)$rate$Female)
+qx_LC_term_1950 <- 1 - exp(-forecast(LC_term_1950, h=2060-vagas_term)$rate$Total)
+
+#1960
+
+qx_LC_male_1960 <- 1 - exp(-forecast(LC_male_1960, h=2060-vagas_hal)$rate$Male)
+qx_LC_female_1960 <- 1 - exp(-forecast(LC_female_1960, h=2060-vagas_hal)$rate$Female)
+qx_LC_term_1960 <- 1 - exp(-forecast(LC_term_1960, h=2060-vagas_term)$rate$Total)
+
+#1970
+
+qx_LC_male_1970 <- 1 - exp(-forecast(LC_male_1970, h=2060-vagas_hal)$rate$Male)
+qx_LC_female_1970 <- 1 - exp(-forecast(LC_female_1970, h=2060-vagas_hal)$rate$Female)
+qx_LC_term_1970 <- 1 - exp(-forecast(LC_term_1970, h=2060-vagas_term)$rate$Total)
+
+#1980
+
+qx_LC_male_1980 <- 1 - exp(-forecast(LC_male_1980, h=2060-vagas_hal)$rate$Male)
+qx_LC_female_1980 <- 1 - exp(-forecast(LC_female_1980, h=2060-vagas_hal)$rate$Female)
+qx_LC_term_1980 <- 1 - exp(-forecast(LC_term_1980, h=2060-vagas_term)$rate$Total)
+
+#1990
+
+qx_LC_male_1990 <- 1 - exp(-forecast(LC_male_1990, h=2060-vagas_hal)$rate$Male)
+qx_LC_female_1990 <- 1 - exp(-forecast(LC_female_1990, h=2060-vagas_hal)$rate$Female)
+qx_LC_term_1990 <- 1 - exp(-forecast(LC_term_1990, h=2060-vagas_term)$rate$Total)
+
+#2000
+
+qx_LC_male_2000 <- 1 - exp(-forecast(LC_male_2000, h=2060-vagas_hal)$rate$Male)
+qx_LC_female_2000 <- 1 - exp(-forecast(LC_female_2000, h=2060-vagas_hal)$rate$Female)
+qx_LC_term_2000 <- 1 - exp(-forecast(LC_term_2000, h=2060-vagas_term)$rate$Total)
+
+```
+
+
+6.1. lépés:  Modellek teszteléséhez függvények (khi négyzet próba illeszkedésre -> magasak lesznek az értékek, mert nagyon nagy a minta, de a modellek összehasonlítására alkalmas)
+
+```{r}
+#khi négyzet teszthez függvények készítése
+
+khi2_hal_male <- function(qx_male, felso, vagas) {
+  qx <- qx_male[ ,1:(felso-vagas)]
+  khi2 <- sum((Deaths_test$Male + as.vector(log(1 - as.vector(qx)) * Exposures_test$Male))^2 / ((as.vector(qx) - 1) * log(1 - as.vector(qx)) * Exposures_test$Male))
+  szf <- 101 * (felso-vagas)
+  return(c(#substitute(qx_male), 
+           khi2, 
+           pchisq(khi2, szf, lower.tail=FALSE)))
+  
+}
+
+khi2_hal_female <- function(qx_female, felso, vagas) {
+  qx <- qx_female[ ,1:(felso-vagas)]
+  khi2 <- sum((Deaths_test$Female + as.vector(log(1 - as.vector(qx)) * Exposures_test$Female))^2 / ((as.vector(qx) - 1) * log(1 - as.vector(qx)) * Exposures_test$Female))
+  szf <- 101 * (felso-vagas)
+  return(c(#substitute(qx_female), 
+           khi2, 
+           pchisq(khi2, szf, lower.tail=FALSE)))
+  
+}
+
+
+
+khi2_term <- function(term_female, felso, vagas) {
+  term <- term_female[ ,1:(felso-vagas)]
+  khi2 <- sum((births_test$Total + as.vector(log(1 - as.vector(term)) * t_expos_test$Exposure))^2 / ((as.vector(term) - 1) * log(1 - as.vector(term)) * t_expos_test$Exposure))
+  szf <- (50-14+1) * (felso-vagas)
+  return(c(#substitute(term_female), 
+           khi2, 
+           pchisq(khi2, szf, lower.tail=FALSE)))
+  
+}
+
+
+```
+
+6.2. lépés: Illeszkedés tesztelése
+
+
+```{r}
+#a férfi halandóság esetében a 1990-es modellek a legjobban illeszkedők (abból is a gdp-s, de nincs nagy különbség a három esetben)
+
+print("Férfi halandóság")
+khi2_hal_male(qx_LC_male_1950, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1950_arima, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1950_gdp, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1960, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1960_arima, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1960_gdp, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1970, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1970_arima, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1970_gdp, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1980, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1980_arima, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1980_gdp, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1990, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1990_arima, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_1990_gdp, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_2000, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_2000_arima, felso, vagas_hal)
+khi2_hal_male(qx_LC_male_2000_gdp, felso, vagas_hal)
+
+#női halandóság esetében az 1980-as modellek illeszkednek legjobban, abból is a sima, bár csak kis különbséggel
+
+print("Női halandóság")
+khi2_hal_female(qx_LC_female_1950, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1950_arima, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1950_gdp, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1960, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1960_arima, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1960_gdp, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1970, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1970_arima, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1970_gdp, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1980, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1980_arima, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1980_gdp, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1990, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1990_arima, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_1990_gdp, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_2000, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_2000_arima, felso, vagas_hal)
+khi2_hal_female(qx_LC_female_2000_gdp, felso, vagas_hal)
+
+#termékenységi adatok esetében a 2000-es illeszkedik legjobban, azok közül is a sima
+
+print("Termékenység")
+khi2_term(qx_LC_term_1950, felso, vagas_term)
+khi2_term(qx_LC_term_1950_arima, felso, vagas_term)
+khi2_term(qx_LC_term_1950_gdp, felso, vagas_term)
+khi2_term(qx_LC_term_1960, felso, vagas_term)
+khi2_term(qx_LC_term_1960_arima, felso, vagas_term)
+khi2_term(qx_LC_term_1960_gdp, felso, vagas_term)
+khi2_term(qx_LC_term_1970, felso, vagas_term)
+khi2_term(qx_LC_term_1970_arima, felso, vagas_term)
+khi2_term(qx_LC_term_1970_gdp, felso, vagas_term)
+khi2_term(qx_LC_term_1980, felso, vagas_term)
+khi2_term(qx_LC_term_1980_arima, felso, vagas_term)
+khi2_term(qx_LC_term_1980_gdp, felso, vagas_term)
+khi2_term(qx_LC_term_1990, felso, vagas_term)
+khi2_term(qx_LC_term_1990_arima, felso, vagas_term)
+khi2_term(qx_LC_term_1990_gdp, felso, vagas_term)
+khi2_term(qx_LC_term_2000, felso, vagas_term)
+khi2_term(qx_LC_term_2000_arima, felso, vagas_term)
+khi2_term(qx_LC_term_2000_gdp, felso, vagas_term)
+```
+6.3. lépés: A legjobban illeszkedő modellek reziduálisaira próba: fehér zajok-e?
+```{r}
+
+
+LC_male_1990kt <- Arima(LC_male_1990$kt, order = c(0, 1, 0), include.drift = TRUE)
+Box.test(LC_male_1990kt$residuals)
+Box.test(auto.arima(LC_male_1990$kt)$residuals)
+Box.test(LC_male_1990_gdp$residuals)
+
+LC_female_1980kt <- Arima(LC_female_1980$kt, order = c(0, 1, 0), include.drift = TRUE)
+Box.test(LC_female_1980kt$residuals)
+LC_female_1990kt <- Arima(LC_female_1990$kt, order = c(0, 1, 0), include.drift = TRUE)
+Box.test(LC_female_1990kt$residuals)
+Box.test(auto.arima(LC_female_1980$kt)$residuals)
+Box.test(LC_female_1980_gdp$residuals)
+
+LC_term_2000kt <- Arima(LC_term_2000$kt, order = c(0, 1, 0), include.drift = TRUE)
+Box.test(LC_term_2000kt$residuals)
+Box.test(auto.arima(LC_term_2000$kt)$residuals)
+Box.test(LC_term_2000_gdp$residuals)
+
+```
+6.4. lépés: Reziduális plotok
+```{r}
+plot(LC_male_1990kt$residuals)
+plot(auto.arima(LC_male_1990$kt)$residuals)
+plot(LC_male_1990_gdp$residuals)
+
+plot(LC_female_1980kt$residuals)
+plot(LC_female_1990kt$residuals)
+plot(auto.arima(LC_female_1980$kt)$residuals)
+plot(LC_female_1980_gdp$residuals)
+
+plot(LC_term_2000kt$residuals)
+plot(auto.arima(LC_term_2000$kt)$residuals)
+plot(LC_term_2000_gdp$residuals)
+```
+7.1. lépés: Legmegfelelőbb modellek kiválasztása
+
+Bázisok:
+
+Férfi halandóság: 1990
+Női halandóság: 1980
+Termékenység: 2000
+
+Ezen belül a GDP-t tartalmazó modelleket a magyarázó erő hiánya miatt elvetjük. Az "alap" modell és az illesztett ARIMA-val működő modell közül kell választani.
+
+Továbbá:
+
+Férfi halandóság: ARIMA(0,1,0)-t illeszt rá, tehát ugyanaz a kettő, továbbiakban az alapmodellt használjuk.
+
+Női halandóság: a Box tesztnél a p érték az alap modellnél meglehetősen alacsony, a hipotézist 10%-os szignifikancia szinten elvetjük, miszerint a reziduálisok egy fehér zaj. Így az illesztett ARIMA modellt használjuk a továbbiakban. 
+
+Termékenység: az "alap" és az illesztett khi négyzet próba értékei között elég nagy eltérés van, így a továbbiakban az alap modellel dolgozunk, mivel annak jobb az illeszkedése.
+
+
+
+7.2. lépés: A kivaálasztott modellek újraillesztése
+
+```{r}
+#változás esetén itt a paramétereket lehet, hogy manuálisan át kell állítani 
+
+#qx_male_chosen <- qx_LC_male_1990 #ARIMA(0,1,0)
+#qx_female_chosen <- qx_LC_female_1980_arima #ARIMA(0,1,1)
+#term_chosen <- qx_LC_term_2000 #ARIMA(0,1,0)
+
+ferfi_bazis <- 1990
+noi_bazis <- 1980
+term_bazis <- 2000
+
+#férfi adatok
+
+Deaths_final_male <- Deaths_1x1[Deaths_1x1$Year<=felso,]
+Deaths_final_male <- Deaths_final_male[Deaths_final_male$Year>=ferfi_bazis,]
+
+Exposures_final_male <- Exposures_1x1[Exposures_1x1$Year<=felso,]
+Exposures_final_male <- Exposures_final_male[Exposures_final_male$Year>=ferfi_bazis,]
+
+#női adatok
+
+Deaths_final_female <- Deaths_1x1[Deaths_1x1$Year<=felso,]
+Deaths_final_female <- Deaths_final_female[Deaths_final_female$Year>=noi_bazis,]
+
+Exposures_final_female <- Exposures_1x1[Exposures_1x1$Year<=felso,]
+Exposures_final_female <- Exposures_final_female[Exposures_final_female$Year>=noi_bazis,]
+
+#termékenység adatok
+
+births_final <- HUNbirthsRR[HUNbirthsRR$Year<=felso,]
+births_final <- births_final[births_final$Year>=term_bazis,]
+
+t_expos_final <- HUNexposRR[HUNexposRR$Year<=felso,]
+t_expos_final <- t_expos_final[t_expos_final$Year>=term_bazis,]
+
+
+  #férfi halandóság
+  
+  Deaths_final_male$mxt_male <- Deaths_final_male$Male/Exposures_final_male$Male
+  mxt_male <- matrix(Deaths_final_male$mxt_male, nrow=101, ncol=felso-ferfi_bazis+1)
+  Ext_male <- matrix(Exposures_final_male$Male, nrow=101, ncol=felso-ferfi_bazis+1)
+  halandosag_male <- demogdata(mxt_male, Ext_male, ages = 0:100, years = ferfi_bazis:felso, "mortality", "Hungary", "Male")
+
+  #női halandóság
+  
+  Deaths_final_female$mxt_female <- Deaths_final_female$Female/Exposures_final_female$Female
+  mxt_female <- matrix(Deaths_final_female$mxt_female, nrow=101, ncol=felso-noi_bazis+1)
+  Ext_female <- matrix(Exposures_final_female$Female, nrow=101, ncol=felso-noi_bazis+1)
+  halandosag_female <- demogdata(mxt_female, Ext_female, ages = 0:100, years = noi_bazis:felso, "mortality", "Hungary", "Female")
+
+  #termékenység
+ 
+  births_final$tfr <- births_final$Total/t_expos_final$Exposure
+  tfr <- matrix(births_final$tfr, nrow=50-14+1, ncol=felso-term_bazis+1)
+  Ext_fert <- matrix(t_expos_final$Exposure, nrow=50-14+1, ncol=felso-term_bazis+1)
+  termekenyseg <- demogdata(tfr, Ext_fert, 14:50, term_bazis:felso, "fertility", "Hungary", "Total")   
+
+  
+  
+  
+ LC_male_final <- lca(halandosag_male, interpolate = TRUE)
+ qx_LC_male_final <- 1 - exp(-forecast(LC_male_final, h=2060-felso)$rate$Male)
+ 
+ LC_female <- lca(halandosag_female, interpolate = TRUE)
+ fc_LC_female_final <- forecast(auto.arima(LC_female$kt), h = 2060-felso) #a kiválasztott modellre illesztett ARIMA kell
+ lmxt_fc_LC_female_final <- outer(LC_female$ax, rep(1, 2060-felso)) + outer(LC_female$bx, fc_LC_female_final$mean)
+ qx_LC_female_final <- 1 - exp(-exp(lmxt_fc_LC_female_final))
+
+ #LC_term_final <- lca(termekenyseg, interpolate = TRUE)
+ #tfr_LC_term_final <- 1 - exp(-forecast(LC_term_final, h=2060-felso)$rate$Total)
+ 
+ #termékenység korrekció -> az elszálló idősort kimerevítjük az adott határnál
+ 
+ 
+ LC_term_final <- lca(termekenyseg, interpolate = TRUE)
+ tfr_LC_term_final <- 1 - exp(-forecast(LC_term_final, h=2060-felso)$rate$Total)
+ tfr_LC_term_final_eredeti <- 1 - exp(-forecast(LC_term_final, h=2060-felso)$rate$Total)
+ 
+ tfr_hatar <- 1.7
+
+ tfr_fc_korrekcio <- colSums(tfr_LC_term_final)
+
+ 
+ for (ev in 1:40) {
+   if (tfr_fc_korrekcio[ev] <= tfr_hatar) {
+     tfr_LC_term_final[,ev] = tfr_LC_term_final[,ev]
+   } else {
+     tfr_LC_term_final[,ev] = tfr_LC_term_final[,ev - 1]
+   }
+ }
+
+
+
+```
+8.0. lépés: COVID korrekció a cseh adatok alapján
+
+```{r}
+cseh_adatok <- read_excel("F:/egyetem/orak/9/biztmat/szakszem/modell/cseh_adatok.xlsx", 
+    sheet = "eredmeny")
+
+for (kor in 1:101) {
+  if (kor <= 25){
+    qx_LC_male_final[kor,1] = qx_LC_male_final[kor,1] * as.numeric(cseh_adatok[1,3])
+    qx_LC_male_final[kor,2] = qx_LC_male_final[kor,2] * as.numeric(cseh_adatok[1,3])
+    qx_LC_female_final[kor,1] = qx_LC_female_final[kor,1] * as.numeric(cseh_adatok[1,2])
+    qx_LC_female_final[kor,2] = qx_LC_female_final[kor,2] * as.numeric(cseh_adatok[1,2])
+  } else if (kor <= 65) {
+    qx_LC_male_final[kor,1] = qx_LC_male_final[kor,1] * as.numeric(cseh_adatok[2,3])
+    qx_LC_male_final[kor,2] = qx_LC_male_final[kor,2] * as.numeric(cseh_adatok[2,3])
+    qx_LC_female_final[kor,1] = qx_LC_female_final[kor,1] * as.numeric(cseh_adatok[2,2])
+    qx_LC_female_final[kor,2] = qx_LC_female_final[kor,2] * as.numeric(cseh_adatok[2,2])   
+  } else {
+    qx_LC_male_final[kor,1] = qx_LC_male_final[kor,1] * as.numeric(cseh_adatok[3,3])
+    qx_LC_male_final[kor,2] = qx_LC_male_final[kor,2] * as.numeric(cseh_adatok[3,3])
+    qx_LC_female_final[kor,1] = qx_LC_female_final[kor,1] * as.numeric(cseh_adatok[3,2])
+    qx_LC_female_final[kor,2] = qx_LC_female_final[kor,2] * as.numeric(cseh_adatok[3,2]) 
+  }
+}
+
+
+```
+
+
+
+8.1. lépés: Népességszám előrejelzés
+```{r}
+
+Exposures_2020 <- Exposures_1x1[Exposures_1x1$Year == 2020,]
+
+
+male_ratio <- 0.51
+female_ratio <- 1 - male_ratio
+
+
+Population_fc_male <- matrix(NA, nrow = 101, ncol = 40)
+Population_fc_female <- matrix(NA, nrow = 101, ncol = 40)
+
+for (y in 1:40) {
+  for (a in 1:100){
+    if (y == 1) {
+      Population_fc_male[1,y] = sum(Exposures_2020[15:51,3] * -log(1 - tfr_LC_term_final[,y])) * male_ratio
+      Population_fc_female[1,y] = sum(Exposures_2020[15:51,3] * -log(1 - tfr_LC_term_final[,y])) * female_ratio
+      Population_fc_male[a+1, y] = Exposures_2020[a,4] * (1 + log(1 - qx_LC_male_final[a,y]))
+      Population_fc_female[a+1, y] = Exposures_2020[a,3] * (1 + log(1 - qx_LC_female_final[a,y]))
+
+    } else {
+      Population_fc_male[1,y] = sum(Population_fc_female[15:51, y-1] * -log(1 - tfr_LC_term_final[,y])) * male_ratio
+      Population_fc_female[1,y] = sum(Population_fc_female[15:51, y-1] * -log(1 - tfr_LC_term_final[,y])) * female_ratio
+      Population_fc_male[a+1, y] = Population_fc_male[a, y-1] * (1 + log(1 - qx_LC_male_final[a,y]))
+      Population_fc_female[a+1, y] = Population_fc_female[a, y-1] * (1 + log(1 - qx_LC_female_final[a,y]))
+
+    }
+    
+  }
+}
+
+evek <- (felso+1):2060
+korok <- 0:100
+
+Population_fc_male_df <- data.frame(Population_fc_male, row.names = korok)
+colnames(Population_fc_male_df) <- evek
+
+Population_fc_female_df <- data.frame(Population_fc_female, row.names = korok)
+colnames(Population_fc_female_df) <- evek
+
+
+
+
+
+```
+
+
+
+
+
+8.2. lépés: Teljes lakosság
+
+```{r}
+lakossag_ferfi <- rep(NA, 101)
+lakossag_noi <- rep(NA, 101)
+
+for (ev in 1950:2060) {
+  if (ev <= 2020) {
+    lakossag_ferfi[ev - 1949] = sum(Exposures_1x1[Exposures_1x1$Year==ev,4]) 
+    lakossag_noi[ev - 1949] = sum(Exposures_1x1[Exposures_1x1$Year==ev,3]) 
+  } else {
+    lakossag_ferfi[ev - 1949] = sum(Population_fc_male_df[,ev - 2020]) 
+    lakossag_noi[ev - 1949] = sum(Population_fc_female_df[,ev - 2020]) 
+    
+  }
+}
+
+lakossag_total <- lakossag_ferfi + lakossag_noi
+lakossag_evek <- 1950:2060
+lakossag_df <- data.frame(lakossag_evek, lakossag_total)
+colnames(lakossag_df) <- c("Év", "Lakosság")
+
+ggplot(lakossag_df, aes(x = lakossag_df$Év, y = lakossag_df$Lakosság)) + 
+  ylim(000000,11000000) +
+  geom_area(fill = "bisque3") +
+  geom_line(color = "bisque4", lwd = 1.5) +
+  xlim(1950, 2060) +
+  labs(title = "Magyarország népessége", x = "Év", y = "Lakosság száma") +
+  scale_x_continuous(n.breaks = 10) 
+
+
+print(lakossag_df[111,2]) 
+
+
+
+
+```
+
+
+
+8.3. lépés: Függőségi ráta
+
+```{r}
+
+lakossag_gyerek <- rep(NA, 111)
+lakossag_eltarto <- rep(NA, 111)
+lakossag_idos <- rep(NA, 111)
+
+
+for (ev in 1950:2060) {
+  if (ev <= 2020) {
+    eves_adat = Exposures_1x1[Exposures_1x1$Year == ev,]
+    
+    lakossag_gyerek[ev - 1949] = sum(eves_adat[eves_adat$Age <= 18, 5])
+    lakossag_eltarto[ev - 1949] = sum(eves_adat[eves_adat$Age %in% 19:64, 5])
+    lakossag_idos[ev - 1949] = sum(eves_adat[eves_adat$Age > 65, 5])
+    
+  } else {
+    eves_adat = Population_fc_male_df + Population_fc_female_df
+    
+    lakossag_gyerek[ev - 1949] = sum(eves_adat[1:19, ev-2020])
+    lakossag_eltarto[ev - 1949] = sum(eves_adat[20:65, ev-2020])
+    lakossag_idos[ev - 1949] = sum(eves_adat[66:101, ev-2020])
+    
+  }
+}
+
+idos_fuggosegi <- lakossag_idos/lakossag_eltarto
+teljes_fuggosegi <- (lakossag_idos + lakossag_gyerek)/lakossag_eltarto
+fuggosegi_evek <- 1950:2060
+
+idos_df <- data.frame(fuggosegi_evek, idos_fuggosegi, teljes_fuggosegi)
+colnames(idos_df) <- c("Év", "Idős", "Teljes")
+
+
+ggplot(idos_df, aes(x = idos_df$Év)) + 
+  geom_line(aes(y =idos_df$Idős, colour = "Időskori függőségi ráta"), size = 1.5) +
+  geom_line(aes(y =idos_df$Teljes, colour = "Teljes függőségi ráta"), size = 1.5) +
+  labs(title = "Függőségi ráták", x = "Év", y = "Függőségi ráta") +
+  ylim(0, 1) +
+  scale_color_manual(name = "Jelmagyarázat", values = c("Teljes függőségi ráta" = "darkslategray3", "Időskori függőségi ráta" = "darkslategray")) +
+  scale_x_continuous(n.breaks = 10) 
+
+
+
+#Note: nem nyugdíjkorhatár, hanem 65 év a vágás
+```
+8.4. lépés: Korfa ábrázolás
+
+```{r}
+#férfi-nő arány
+nem_aranyok <- data.frame("Férfi" = lakossag_ferfi/lakossag_total, "Női"= lakossag_noi/lakossag_total)
+
+#eltartó-eltartott arány
+
+eltarto_aranyok <- (lakossag_gyerek + lakossag_idos) / lakossag_total
+
+#tényadatok
+
+vector_teny_ferfi <- c(-t(Exposures_1x1$Male))
+vector_teny_noi <- c(t(Exposures_1x1$Female))
+teny_evek <- c(t(1950:felso %*% t(rep(1, 101))))
+teny_korok <- rep(korok, 71)
+teny_ferfi <- c(rep("Férfi", 7171))
+teny_noi <- c(rep("Nő", 7171))
+
+teny_ferfi <- data.frame(teny_evek, teny_korok, vector_teny_ferfi, teny_ferfi)
+colnames(teny_ferfi) <- c("year", "Kor", "Népességszám", "Nem")
+teny_noi <- data.frame(teny_evek, teny_korok, vector_teny_noi, teny_noi)
+colnames(teny_noi) <- c("year", "Kor", "Népességszám", "Nem")
+
+Population_total_teny <- rbind(teny_ferfi, teny_noi)
+
+#az adatokat megfelelő formátumúvá kell átformálni
+
+hosszu_evek <- c(t(evek %*% t(rep(1, 101))))
+vector_pop_male_fc <- c(-Population_fc_male)
+vector_pop_female_fc <- c(Population_fc_female)
+hosszu_korok <- rep(korok, 40)
+ferfi <- c(rep("Férfi", 4040))
+noi <- c(rep("Nő", 4040))
+
+
+population_ferfi <- data.frame(hosszu_evek, hosszu_korok, vector_pop_male_fc, ferfi)
+colnames(population_ferfi) <- c("year", "Kor", "Népességszám", "Nem")
+population_noi <- data.frame(hosszu_evek, hosszu_korok, vector_pop_female_fc, noi)
+colnames(population_noi) <- c("year", "Kor", "Népességszám", "Nem")
+
+Population_total_fc <- rbind(population_ferfi, population_noi)
+
+
+#egybe a tény és az előrejelzett
+
+Population_total <- rbind(Population_total_teny, Population_total_fc)
+
+korfa <- ggplot(Population_total, aes(x = Kor, y = Népességszám, fill = Nem)) +
+  scale_fill_manual(values = c("steelblue3", "red3")) +
+  geom_bar(stat = "identity") +
+  coord_flip() + scale_y_continuous(labels = comma) + #ylim(-95000,95000) +
+
+  transition_time(Population_total$year) +
+  labs(title = 'Év: {round(frame_time)}', x = "Korok", y = "Fő", subtitle = "Népesség: {round(lakossag_total[frame_time - 1949])}, Eltartottak aránya: {round(eltarto_aranyok[frame_time - 1949], 3)}") +
+  ease_aes("linear")
+
+animate(korfa, nframes = 222, renderer = gifski_renderer())
+
+
+
+
+
+```
+
+8.5. lépés: Lakosság ábrázolása csoportok szerint
+
+```{r}
+lakossag_csoport <- data.frame(1950:2060, lakossag_gyerek, lakossag_idos + lakossag_gyerek, lakossag_idos + lakossag_eltarto + lakossag_gyerek)
+colnames(lakossag_csoport) <- c("Év", "Gyerek", "Idős", "Eltartó")
+
+options(scipen = 999)
+ggplot(lakossag_csoport, aes(x = lakossag_csoport$Év)) +
+  scale_color_manual(name = "", values = c("Teljes függőségi ráta" = "darkslategray3", "Időskori függőségi ráta" = "darkslategray")) +
+  scale_fill_manual(name = "Jelmagyarázat", values = c("Eltartó" = "bisque4", "Idős" = "bisque3", "Gyerek" = "bisque2")) +
+  geom_area(aes(y = lakossag_csoport$Eltartó, fill = "Eltartó")) +
+  geom_area(aes(y = lakossag_csoport$Idős, fill = "Idős")) +
+  geom_area(aes(y = lakossag_csoport$Gyerek, fill = "Gyerek")) +
+  labs(title = "Népesség alakulása", x = "Év", y = "Népesség") +
+  ylim(0, 11000000) +
+  scale_y_continuous(name = "Népesség száma",  sec.axis = sec_axis( trans=~./11000000, name="Függőségi ráta")) +
+  geom_line(aes(y =idos_df$Teljes*11000000, colour = "Teljes függőségi ráta"), size = 2) +
+  geom_line(aes(y =idos_df$Idős*11000000, colour = "Időskori függőségi ráta"), size = 2) +
+  scale_x_continuous(n.breaks = 10) 
+
+
+options(scipen = 999)
+ggplot(lakossag_csoport, aes(x = lakossag_csoport$Év)) +
+  scale_fill_manual(name = "Jelmagyarázat", values = c("Eltartó" = "bisque4", "Idős" = "bisque3", "Gyerek" = "bisque2")) +
+  geom_area(aes(y = lakossag_csoport$Eltartó, fill = "Eltartó")) +
+  geom_area(aes(y = lakossag_csoport$Idős, fill = "Idős")) +
+  geom_area(aes(y = lakossag_csoport$Gyerek, fill = "Gyerek")) +
+  labs(title = "Népesség alakulása", x = "Év", y = "Népesség") +
+  ylim(0, 11000000) +
+  scale_x_continuous(n.breaks = 10) 
+
+
+```
+8.6. lépés: Lakosság ábrázolása csoportok szerint + függőségi ráták
+
+```{r}
+lakossag_csoport <- data.frame(1950:2060,  lakossag_idos + lakossag_gyerek, lakossag_idos + lakossag_eltarto + lakossag_gyerek)
+colnames(lakossag_csoport) <- c("Év", "Eltartott", "Eltartó")
+
+options(scipen = 999)
+ggplot(lakossag_csoport, aes(x = lakossag_csoport$Év)) +
+  scale_color_manual(name = "", values = c( "Teljes függőségi ráta" = "darkslategray3")) +
+  scale_fill_manual(name = "Jelmagyarázat", values = c("Eltartó" = "bisque4", "Eltartott" = "bisque3")) +
+  geom_area(aes(y = lakossag_csoport$Eltartó, fill = "Eltartó")) +
+  geom_area(aes(y = lakossag_csoport$Eltartott, fill = "Eltartott")) +
+  labs(title = "Népesség alakulása", x = "Év", y = "Népesség") +
+  ylim(0, 11000000) +
+  scale_y_continuous(name = "Népesség száma",  sec.axis = sec_axis( trans=~./11000000, name="Függőségi ráta")) +
+  geom_line(aes(y =idos_df$Teljes*11000000, colour = "Teljes függőségi ráta"), size = 2) +
+  scale_x_continuous(n.breaks = 10)
+  
+  
+
+
+
+```
+
+
+8.7. lépés: Termékenységi ráta alakulása
+
+```{r}
+#korrigált
+
+total_fertility <- rep(NA, 111)
+
+tfr_teny <- colSums(tfr)
+tfr_fc <- colSums(tfr_LC_term_final)
+
+tfr_total <- c(tfr_teny, as.vector(tfr_fc))
+evek_tfr <- 2000:2060
+
+tfr_df <- data.frame(year=evek_tfr, tfr=tfr_total)
+
+ggplot(tfr_df, aes(x = evek_tfr, y = tfr_total, color = I("darkslategray"))) + geom_line(size = 1.5) + labs(title = "Termékenységi ráta alakulása", x = "Év", y = "Termékenységi ráta")
+
+#korrekció nélkül
+
+
+
+total_fertility_eredeti <- rep(NA, 111)
+
+tfr_fc_eredeti <- colSums(tfr_LC_term_final_eredeti)
+
+tfr_total_eredeti <- c(tfr_teny, as.vector(tfr_fc_eredeti))
+
+
+tfr_df_eredeti <- data.frame(year=evek_tfr, tfr=tfr_total_eredeti)
+
+ggplot(tfr_df_eredeti, aes(x = evek_tfr, y = tfr_total_eredeti, color = I("darkslategray"))) + geom_line(size = 1.5) + labs(title = "Termékenységi ráta alakulása", x = "Év", y = "Termékenységi ráta")
+
+
+
+```
+8.8. lépés: Várható élettartam kalkuláció
+
+```{r}
+#férfi
+
+lx_male <- data.frame()
+qx_male_teny <- 1 - exp(-mxt_male_teny)
+colnames(qx_male_teny) <- 1:71
+qx_male_osszes <- cbind(qx_male_teny, qx_LC_male_final)
+colnames(qx_male_osszes) <- 1:111
+
+for (ev in 1:111) {
+  for (kor in 0:100) {
+    if (kor == 0) {
+      lx_male[kor + 1, ev] = 100000
+    } else {
+      lx_male[kor + 1, ev] = lx_male[kor, ev] * (1 - qx_male_osszes[kor, ev])
+    }
+  }
+}
+
+colnames(lx_male) <- 1950:2060
+
+exp_male <- data.frame()
+
+for (ev in 1:111) {
+  for (kor in 0:100) {
+    exp_male[kor + 1, ev] = sum(lx_male[(kor + 2):100, ev]) / lx_male[kor + 1, ev] + 0.5
+  }
+}
+
+colnames(exp_male) <- 1950:2060
+
+#női
+
+lx_female <- data.frame()
+qx_female_teny <- 1 - exp(-mxt_female_teny)
+colnames(qx_female_teny) <- 1:71
+qx_female_osszes <- cbind(qx_female_teny, qx_LC_female_final)
+colnames(qx_female_osszes) <- 1:111
+
+for (ev in 1:111) {
+  for (kor in 0:100) {
+    if (kor == 0) {
+      lx_female[kor + 1, ev] = 100000
+    } else {
+      lx_female[kor + 1, ev] = lx_female[kor, ev] * (1 - qx_female_osszes[kor, ev])
+    }
+  }
+}
+
+colnames(lx_female) <- 1950:2060
+
+exp_female <- data.frame()
+
+for (ev in 1:111) {
+  for (kor in 0:100) {
+    exp_female[kor + 1, ev] = sum(lx_female[(kor + 2):100, ev]) / lx_female[kor + 1, ev] + 0.5
+  }
+}
+
+colnames(exp_female) <- 1950:2060
+
+#Születéskor várható élettartam
+
+szul_exp_df <-data.frame("Év" = 1950:2060, "Férfi" = as.vector(t(exp_male[1,])), "Női" = as.vector(t(exp_female[1,])))
+
+ggplot(szul_exp_df) +
+  geom_line(aes(y = szul_exp_df$Férfi, x = szul_exp_df$Év, color = "Férfi"), size = 1.5) +
+  geom_line(aes(y = szul_exp_df$Női, x = szul_exp_df$Év, color = "Női"), size = 1.5) +
+  labs(title = "Születéskor várható élettartam", x = "Év", y = "Várható Élettartam (év)") +
+  scale_x_continuous(n.breaks = 10) +
+  scale_color_manual(name = "Jelmagyarázat", values = c("Női" = "red3", "Férfi" = "steelblue3"))
+
+#65 éves korban várható élettartam
+
+idos_exp_df <-data.frame("Év" = 1950:2060, "Férfi" = as.vector(t(exp_male[66,])), "Női" = as.vector(t(exp_female[66,])))
+
+ggplot(idos_exp_df) +
+  geom_line(aes(y = idos_exp_df$Férfi, x = idos_exp_df$Év, color = "Férfi"), size = 1.5) +
+  geom_line(aes(y = idos_exp_df$Női, x = idos_exp_df$Év, color = "Női"), size = 1.5) +
+  labs(title = "65 éves korban várható élettartam", x = "Év", y = "Várható Élettartam (év)") +
+  scale_x_continuous(n.breaks = 10) +
+  scale_color_manual(name = "Jelmagyarázat", values = c("Női" = "red3", "Férfi" = "steelblue3"))
+
+```
+
+
+9.0. lépés: Feltételezések
+
+```{r}
+#2022-2060 (2022 még tényadat)
+
+#bruttó béremelkedés
+
+beremelkedes <- c(0.156, 0.098, 0.076, rep(0.0816, 36)) 
+
+#infláció - nyugdíj indexálás
+
+inflacio <- c(0.145, 0.26, 0.1, 0.03, rep(0.04, 35))
+
+#reaálbér emelkedés - kezdő nyugdíj növekedés
+
+realber_novekedes <- (1 + beremelkedes) / (1 + inflacio)
+
+#GDP növekedés - ehhez arányosítva szebb az eredmény
+
+gdp_novekedes <- c(0.046, 0.01, rep(0.04, 37)) #0.04
+
+
+```
+
+
+9.1. lépés: Kiadási oldal - nyugdíjasok aránya (nők 40 nélkül)
+
+```{r}
+
+
+
+ferfi_ellatarany <-  read_excel("F:/egyetem/orak/9/biztmat/szakszem/modell/regi_modell_adatok.xlsx", 
+    sheet = "ferfi")
+
+noi_ellatarany <-  read_excel("F:/egyetem/orak/9/biztmat/szakszem/modell/regi_modell_adatok.xlsx", 
+    sheet = "noi")
+
+nok40_ellatarany <-  read_excel("F:/egyetem/orak/9/biztmat/szakszem/modell/regi_modell_adatok.xlsx", 
+    sheet = "nok40")
+
+
+#férfi
+
+#ellatottak_male_matrix <- matrix(rep(0.9, (100 - 53) * 5), nrow = 100-53, ncol = 5)
+
+
+#ellatottak_male <- data.frame(54:100, ellatottak_male_matrix)
+#colnames(ellatottak_male) <- c("Kor", 2018:2022)
+
+ellatottak_male_jovo <- data.frame()
+uj_belepok_male <- rep(0.955, 2060-2022) #ez is a régi modellből jön
+
+korhatar_male <- c(rep(65, 38)) #c(rep(65, 10), rep(66,8), rep(67, 8), rep(68, 8), rep(69, 4))
+
+for (ev in 2023:2060) {
+  for (kor in 54:100) {
+    if (kor < korhatar_male[ev - 2022]) {
+      ellatottak_male_jovo[kor - 53, ev - 2022] = 0
+    } else if (kor == korhatar_male[ev - 2022]) {
+      ellatottak_male_jovo[kor - 53, ev - 2022] = uj_belepok_male[ev - 2022]
+    } else {
+      if (ev == 2023) {
+        ellatottak_male_jovo[kor - 53, ev - 2022] = ferfi_ellatarany[kor - 54, 5]  
+      } else {
+        ellatottak_male_jovo[kor - 53, ev - 2022] = ellatottak_male_jovo[kor - 54, ev - 2023]
+      }
+    }
+  }
+}
+
+colnames(ellatottak_male_jovo) <- 2023:2060
+
+ellatottak_male_jovo <- data.frame(54:100, ellatottak_male_jovo)
+colnames(ellatottak_male_jovo) <- c("Kor", 2023:2060)
+
+#női
+
+#ellatottak_female_matrix <- matrix(rep(0.9, (100 - 53) * 5), nrow = 100-53, ncol = 5)
+#ellatottak_female <- data.frame(54:100, ellatottak_female_matrix)
+#colnames(ellatottak_female) <- c("Kor", 2018:2022)
+
+ellatottak_female_jovo <- data.frame()
+uj_belepok_female <- rep(0.955, 2060-2022) #ez is a régi modellből jön
+
+korhatar_female <- c(rep(65, 38)) #c(rep(65, 10), rep(66,8), rep(67, 8), rep(68, 8), rep(69, 4))
+
+for (ev in 2023:2060) {
+  for (kor in 54:100) {
+    if (kor < korhatar_female[ev - 2022]) {
+      ellatottak_female_jovo[kor - 53, ev - 2022] = 0
+    } else if (kor == korhatar_female[ev - 2022]) {
+      ellatottak_female_jovo[kor - 53, ev - 2022] = uj_belepok_female[ev - 2022]
+    } else {
+      if (ev == 2023) {
+        ellatottak_female_jovo[kor - 53, ev - 2022] = noi_ellatarany[kor - 54, 5]  
+      } else {
+        ellatottak_female_jovo[kor - 53, ev - 2022] = ellatottak_female_jovo[kor - 54, ev - 2023]
+      }
+    }
+  }
+}
+
+colnames(ellatottak_female_jovo) <- 2023:2060
+
+ellatottak_female_jovo <- data.frame(54:100, ellatottak_female_jovo)
+colnames(ellatottak_female_jovo) <- c("Kor", 2023:2060)
+```
+
+
+9.2. lépés: Kiadási oldal - nők 40
+
+```{r}
+
+#nok40_belepok <- c(0.0059, 0.0209, 0.0481, 0.0958, 0.1776, 0.2676, 0.3526, 0.4276, 0.4926, 0.5376, 0.5505, 0.550459641, 0.56952, 0.585, 0.6) #ezt a meglévő excelből néztem ki. az utolsó kettőt pluszba írtam hozzá
+
+#ellatottak_female40_matrix <- matrix(rep(0, (100 - 53) * 5), nrow = 100-53, ncol = 5)
+#ellatottak_female40 <- data.frame(54:100, ellatottak_female40_matrix)
+#colnames(ellatottak_female40) <- c("Kor", 2018:2022)
+
+ellatottak_female40_jovo <- data.frame()
+
+
+for (ev in 2023:2060) {
+  for (kor in 54:100) {
+    if (kor >= korhatar_female[ev - 2022]) {
+      ellatottak_female40_jovo[kor - 53, ev - 2022] = 0
+    } else {
+      ellatottak_female40_jovo[kor - 53, ev - 2022] = nok40_ellatarany[kor - 53, 5] 
+    }
+  }
+}
+
+colnames(ellatottak_female40_jovo) <- 2023:2060
+
+ellatottak_female40_jovo <- data.frame(54:100, ellatottak_female40_jovo)
+colnames(ellatottak_female40_jovo) <- c("Kor", 2023:2060)
+
+
+
+ellatottak_female_jovo <- ellatottak_female_jovo[-1] + ellatottak_female40_jovo[-1]
+Kor <- 54:100
+
+ellatottak_female_jovo <- cbind(Kor, ellatottak_female_jovo)
+
+```
+
+9.3. lépés: Kiadási oldal - nyugdíjasok száma
+
+```{r}
+ferfi_oregek <- Population_fc_male_df[55:101, -1:-2]
+rownames(ferfi_oregek) <- NULL
+
+nyugdijas_ferfiak_szama <- as.matrix(ellatottak_male_jovo[, -1]) * as.matrix(ferfi_oregek)
+
+noi_oregek <- Population_fc_female_df[55:101, -1:-2]
+rownames(noi_oregek) <- NULL
+
+nyugdijas_nok_szama <- as.matrix(ellatottak_female_jovo[, -1]) * as.matrix(noi_oregek)
+
+nyugdijasok_szama <- nyugdijas_ferfiak_szama + nyugdijas_nok_szama
+```
+
+
+9.4. lépés: Kiadási oldal - átlagnyugdjak
+
+```{r}
+
+#férfi
+
+#2022-es átlagnyugdíjak
+
+atlag_2022_brutto <- 164102
+
+
+atlag_nyugdij_brutto_fc <- c()
+
+for (ev in 2023:2060){
+  atlag_nyugdij_brutto_fc[ev - 2022] <- atlag_2022_brutto * prod(1.01 * (0.15 * (1 + beremelkedes[2 : (ev - 2021)]) + 0.85 * (1 + inflacio[2 : (ev - 2021)])))
+}
+
+nyugdijasok_szama_eves <- colSums(nyugdijasok_szama)
+
+kiadasi_oldal <- nyugdijasok_szama_eves * atlag_nyugdij_brutto_fc  * 13
+
+#novekedes_male <- rep(0.05, 2060 - 2022)
+#kezdo_novekedes_male <- rep(0.04, 2060 - 2022)
+#atlag_2022_male <- rep(NA, 100 - 53)
+#for (kor in 54:100) {atlag_2022_male[kor - 53] = 150000 * 1.01^(kor-54)}
+#
+##note: a kezdők nyugdíját igazítsd a korhatárhoz
+#
+#atlag_ferfi <- data.frame()
+#
+#
+#for (ev in 2023:2060) {
+#  for (kor in 54:100) {
+#    if (ev == 2023) {
+#      atlag_ferfi[kor - 53, ev - 2022] = atlag_2022_male[kor - 53] * (1 + novekedes_male[ev - 2022])
+#    } else if (ev != 2023 & kor == 54){
+#      atlag_ferfi[kor - 53, ev - 2022] = 150000 * (prod(1 + kezdo_novekedes_male[1 : (ev - 2022)]))
+#    } else {
+#      atlag_ferfi[kor - 53, ev - 2022] = atlag_ferfi[kor - 54, ev - 2023] * (1 + novekedes_male[ev - 2022])
+#    }
+#  }
+#}
+#
+#colnames(atlag_ferfi) <- 2023:2060
+#
+#
+#
+##női
+#
+#
+#novekedes_female <- rep(0.05, 2060 - 2022)
+#kezdo_novekedes_female <- rep(0.04, 2060 - 2022)
+#atlag_2022_female <- rep(NA, 100 - 53)
+#for (kor in 54:100) {atlag_2022_female[kor - 53] = 140000 * 1.01^(kor-54)}
+#
+#
+#atlag_noi <- data.frame()
+#
+#
+#for (ev in 2023:2060) {
+#  for (kor in 54:100) {
+#    if (ev == 2023) {
+#      atlag_noi[kor - 53, ev - 2022] = atlag_2022_female[kor - 53] * (1 + novekedes_female[ev - 2022])
+#    } else if (ev != 2023 & kor == 54){
+#      atlag_noi[kor - 53, ev - 2022] = 140000 * (prod(1 + kezdo_novekedes_female[1 : (ev - 2022)]))
+#    } else {
+#      atlag_noi[kor - 53, ev - 2022] = atlag_noi[kor - 54, ev - 2023] * (1 + novekedes_female[ev - 2022])
+#    }
+#  }
+#}
+#
+#colnames(atlag_noi) <- 2023:2060
+
+```
+
+
+9.5. lépés: Kiadási oldal - egyesítés
+```{r}
+#kiadas_ferfi <- atlag_ferfi * nyugdijas_ferfiak_szama
+#eves_kiadas_ferfi <- colSums(kiadas_ferfi)
+#
+#kiadas_noi<- atlag_noi * nyugdijas_nok_szama
+#eves_kiadas_noi <- colSums(kiadas_noi)
+#
+#kiadas_total<- kiadas_ferfi + kiadas_noi
+#eves_kiadas_total <- colSums(kiadas_total)
+
+#ezt majd, ha lesznek adatok érdemes kiplotolni
+
+```
+
+10.1. lépés: Bevételi oldal - adatok
+
+```{r}
+foglalkoztatottsagi <- read_excel("F:/egyetem/orak/9/biztmat/szakszem/modell/foglalkoztatottsagi.xlsx")
+
+fogl_male <- (foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Férfi", 14] + foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Férfi", 13] + foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Férfi", 12])/3
+fogl_female <- (foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Nő", 14] + foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Nő", 13] + foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Nő", 12])/3
+
+```
+
+10.2. lépés: Bevételi oldal - jövőbeli foglalkoztatottsági ráták
+```{r}
+foglalkoztatottak_male <- matrix(nrow = 101, ncol = 2060 - 2022 + 1)
+foglalkoztatottak_male_df <- data.frame(0:100, foglalkoztatottak_male)
+colnames(foglalkoztatottak_male_df) <- c("Kor", 2022:2060)
+
+for (ev in 2022:2060) {
+  for (kor in 0:100) {
+    if (ev == 2022) {
+      if (kor < 15) {
+        foglalkoztatottak_male_df[kor + 1, ev - 2020] = 0
+      } else if (kor < 75) {
+        foglalkoztatottak_male_df[kor + 1, ev - 2020] = as.numeric(fogl_male[ceiling((kor - 14)/5), 1])/100
+      } else {
+        foglalkoztatottak_male_df[kor + 1, ev - 2020] = 0
+      }
+    } else {
+      if (kor < 15) {
+        foglalkoztatottak_male_df[kor + 1, ev - 2020] = 0
+      } else if (kor < 75) {
+        foglalkoztatottak_male_df[kor + 1, ev - 2020] = foglalkoztatottak_male_df[kor + 1, ev - 2021]
+      } else {
+        foglalkoztatottak_male_df[kor + 1, ev - 2020] = 0
+      }
+    }
+  }
+} 
+
+
+
+
+foglalkoztatottak_female <- matrix(nrow = 101, ncol = 2060 - 2022 + 1)
+foglalkoztatottak_female_df <- data.frame(0:100, foglalkoztatottak_female)
+colnames(foglalkoztatottak_female_df) <- c("Kor", 2022:2060)
+
+for (ev in 2022:2060) {
+  for (kor in 0:100) {
+    if (ev == 2022) {
+      if (kor < 15) {
+        foglalkoztatottak_female_df[kor + 1, ev - 2020] = 0
+      } else if (kor < 75) {
+        foglalkoztatottak_female_df[kor + 1, ev - 2020] = as.numeric(fogl_female[ceiling((kor - 14)/5), 1])/100
+      } else {
+        foglalkoztatottak_female_df[kor + 1, ev - 2020] = 0
+      }
+    } else {
+      if (kor < 15) {
+        foglalkoztatottak_female_df[kor + 1, ev - 2020] = 0
+      } else if (kor < 75) {
+        foglalkoztatottak_female_df[kor + 1, ev - 2020] = foglalkoztatottak_female_df[kor + 1, ev - 2021]
+      } else {
+        foglalkoztatottak_female_df[kor + 1, ev - 2020] = 0
+      }
+    }
+  }
+}
+```
+
+
+10.3. lépés: Bevételi oldal - jövőbeli foglalkoztatottak száma
+
+```{r}
+ferfi_fogl <- Population_fc_male_df[1:101, -1:-1]
+rownames(ferfi_fogl) <- NULL
+
+foglalkoztatott_ferfiak_szama <- as.matrix(foglalkoztatottak_male_df[, -1]) * as.matrix(ferfi_fogl)
+
+noi_fogl <- Population_fc_female_df[1:101, -1:-1]
+rownames(noi_fogl) <- NULL
+
+foglalkoztatott_nok_szama <- as.matrix(foglalkoztatottak_female_df[, -1]) * as.matrix(noi_fogl)
+
+foglalkoztatottak <- foglalkoztatott_ferfiak_szama + foglalkoztatott_nok_szama
+```
+
+10.4. lépés: Bevételi oldal - Bruttó bér adatok
+
+```{r}
+kereset <- read_excel("F:/egyetem/orak/9/biztmat/szakszem/modell/kereset.xlsx")
+
+```
+
+10.5. lépés: Bevételi oldal - Bruttó bérek kiszámítása
+
+```{r}
+brutto_berek <- matrix(nrow = 101, ncol = 2060 - 2022 + 1)
+brutto_berek_df <- data.frame(0:100, brutto_berek)
+colnames(brutto_berek_df) <- c("Kor", 2022:2060)
+
+
+
+for (ev in 2022:2060) {
+  for (kor in 0:100) {
+    if (ev == 2022) {
+      if (kor < 20) {
+        brutto_berek_df[kor + 1, ev - 2020] = kereset[1, 5]
+      } else if (kor < 30) {
+        brutto_berek_df[kor + 1, ev - 2020] = kereset[2, 5]
+      } else if (kor < 40) {
+        brutto_berek_df[kor + 1, ev - 2020] = kereset[3, 5]
+      } else if (kor < 50) {
+        brutto_berek_df[kor + 1, ev - 2020] = kereset[4, 5]
+      } else if (kor < 60) {
+        brutto_berek_df[kor + 1, ev - 2020] = kereset[5, 5]
+      } else {
+        brutto_berek_df[kor + 1, ev - 2020] = kereset[6, 5]
+      }
+    } else {
+      if (kor < 20) {
+        brutto_berek_df[kor + 1, ev - 2020] = brutto_berek_df[kor + 1, ev - 2021] * (1 + beremelkedes[ev - 2021])
+      } else if (kor < 30) {
+        brutto_berek_df[kor + 1, ev - 2020] = brutto_berek_df[kor + 1, ev - 2021] * (1 + beremelkedes[ev - 2021])
+      } else if (kor < 40) {
+        brutto_berek_df[kor + 1, ev - 2020] = brutto_berek_df[kor + 1, ev - 2021] * (1 + beremelkedes[ev - 2021])
+      } else if (kor < 50) {
+        brutto_berek_df[kor + 1, ev - 2020] = brutto_berek_df[kor + 1, ev - 2021] * (1 + beremelkedes[ev - 2021])
+      } else if (kor < 60) {
+        brutto_berek_df[kor + 1, ev - 2020] = brutto_berek_df[kor + 1, ev - 2021] * (1 + beremelkedes[ev - 2021])
+      } else {
+        brutto_berek_df[kor + 1, ev - 2020] = brutto_berek_df[kor + 1, ev - 2021] * (1 + beremelkedes[ev - 2021])
+      }
+    }
+  }
+} 
+
+
+```
+
+10.6. lépés: Bevételi oldal - összbér
+
+```{r}
+
+osszber_korev <- foglalkoztatottak * brutto_berek_df[-1] * 12
+brutto_berek_eves <- colSums(osszber_korev) 
+jarulek <- 0.1
+szocho <- 0.13
+szocho_reszesedes <- 0.7163
+
+ossz_szocho <- brutto_berek_eves * szocho * szocho_reszesedes
+ossz_jarulek <- brutto_berek_eves * jarulek 
+
+bevetel <- ossz_szocho + ossz_jarulek
+```
+
+
+
+10.7. lépés: Tényadatok 2019 - 2022 (összehasonlítás)
+
+```{r}
+#szocho_2022 <- 1758400 * 1000000
+#jarulek_2022 <- 1827700 * 1000000
+
+#bevetel_2022 <- szocho_2022 + jarulek_2022
+
+#2022
+
+foglalkoztatottak_2022 <- 4695600
+atlagber_2022 <- 499980
+becsult_bevetel_2022 <- foglalkoztatottak_2022 * atlagber_2022 * 12
+becsult_bevetel_2022 * jarulek
+becsult_bevetel_2022 * szocho * szocho_reszesedes
+
+#2021
+
+foglalkoztatottak_2021 <- 4634600
+atlagber_2021 <- 425915
+becsult_bevetel_2021 <- foglalkoztatottak_2021 * atlagber_2021 * 12
+becsult_bevetel_2021 * jarulek
+becsult_bevetel_2021 * 0.7163 * 0.155
+
+#2020
+
+foglalkoztatottak_2020 <- 4603200
+atlagber_2020 <- 391194
+becsult_bevetel_2020 <- foglalkoztatottak_2020 * atlagber_2020 * 12
+becsult_bevetel_2020 * jarulek
+becsult_bevetel_2020 * 0.7163 * 0.165
+
+#2019
+
+foglalkoztatottak_2019 <- 4644600
+atlagber_2019 <- 356286
+becsult_bevetel_2019 <- foglalkoztatottak_2019 * atlagber_2019 * 12
+becsult_bevetel_2019 * jarulek
+becsult_bevetel_2019 * 0.7022 * 0.185
+
+
+
+
+
+
+#nyug_bevetel_2022 <- becsult_bevetel_2022 * (szocho + jarulek)
+#nyug_bevetel_2022
+
+fogl_male <- (foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Férfi", 14] + foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Férfi", 13] + foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Férfi", 12])/3
+fogl_female <- (foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Nő", 14] + foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Nő", 13] + foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Nő", 12])/3
+
+fogl_2021_ferfi <- foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Férfi", 14]
+fogl_2021_noi <- foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Nő", 14]
+fogl_2020_ferfi <- foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Férfi", 13]
+fogl_2020_noi <- foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Nő", 13]
+fogl_2019_ferfi <- foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Férfi", 12]
+fogl_2019_noi <- foglalkoztatottsagi[foglalkoztatottsagi$Nem=="Nő", 12]
+
+pop_male_2019 <- Exposures_1x1[Exposures_1x1$Year==2019,4]
+pop_female_2019 <- Exposures_1x1[Exposures_1x1$Year==2019,3]
+pop_male_2020 <- Exposures_1x1[Exposures_1x1$Year==2020,4]
+pop_female_2020 <- Exposures_1x1[Exposures_1x1$Year==2020,3]
+pop_male_2021 <- Population_fc_male_df[0:101,1]
+pop_female_2021 <- Population_fc_female_df[0:101,1]
+
+
+foglalkoztatottak_male_2019 <- c()
+
+for (kor in 0:100) {
+  if (kor < 15) {
+    foglalkoztatottak_male_2019[kor + 1] = 0
+  } else if (kor < 75) {
+    foglalkoztatottak_male_2019[kor + 1] = as.numeric(fogl_2021_ferfi[ceiling((kor - 14)/5), 1])/100
+  } else {
+    foglalkoztatottak_male_2019[kor + 1] = 0
+  }
+}
+folgalkozatottak_male_2019_db <- foglalkoztatottak_male_2019 * pop_male_2019
+
+
+
+foglalkoztatottak_male_2020 <- c()
+
+for (kor in 0:100) {
+  if (kor < 15) {
+    foglalkoztatottak_male_2020[kor + 1] = 0
+  } else if (kor < 75) {
+    foglalkoztatottak_male_2020[kor + 1] = as.numeric(fogl_2021_ferfi[ceiling((kor - 14)/5), 1])/100
+  } else {
+    foglalkoztatottak_male_2020[kor + 1] = 0
+  }
+}
+folgalkozatottak_male_2020_db <- foglalkoztatottak_male_2020 * pop_male_2020
+
+
+
+foglalkoztatottak_male_2021 <- c()
+
+for (kor in 0:100) {
+  if (kor < 15) {
+    foglalkoztatottak_male_2021[kor + 1] = 0
+  } else if (kor < 75) {
+    foglalkoztatottak_male_2021[kor + 1] = as.numeric(fogl_2021_ferfi[ceiling((kor - 14)/5), 1])/100
+  } else {
+    foglalkoztatottak_male_2021[kor + 1] = 0
+  }
+}
+folgalkozatottak_male_2021_db <- foglalkoztatottak_male_2021 * pop_male_2021
+
+
+
+foglalkoztatottak_female_2019 <- c()
+
+for (kor in 0:100) {
+  if (kor < 15) {
+    foglalkoztatottak_female_2019[kor + 1] = 0
+  } else if (kor < 75) {
+    foglalkoztatottak_female_2019[kor + 1] = as.numeric(fogl_2021_ferfi[ceiling((kor - 14)/5), 1])/100
+  } else {
+    foglalkoztatottak_female_2019[kor + 1] = 0
+  }
+}
+folgalkozatottak_female_2019_db <- foglalkoztatottak_female_2019 * pop_female_2019
+
+
+
+foglalkoztatottak_female_2020 <- c()
+
+for (kor in 0:100) {
+  if (kor < 15) {
+    foglalkoztatottak_female_2020[kor + 1] = 0
+  } else if (kor < 75) {
+    foglalkoztatottak_female_2020[kor + 1] = as.numeric(fogl_2021_ferfi[ceiling((kor - 14)/5), 1])/100
+  } else {
+    foglalkoztatottak_female_2020[kor + 1] = 0
+  }
+}
+folgalkozatottak_female_2020_db <- foglalkoztatottak_female_2020 * pop_female_2020
+
+
+
+foglalkoztatottak_female_2021 <- c()
+
+for (kor in 0:100) {
+  if (kor < 15) {
+    foglalkoztatottak_female_2021[kor + 1] = 0
+  } else if (kor < 75) {
+    foglalkoztatottak_female_2021[kor + 1] = as.numeric(fogl_2021_ferfi[ceiling((kor - 14)/5), 1])/100
+  } else {
+    foglalkoztatottak_female_2021[kor + 1] = 0
+  }
+}
+folgalkozatottak_female_2021_db <- foglalkoztatottak_female_2021 * pop_female_2021
+
+folgalkozatottak_2019_db <- folgalkozatottak_male_2019_db + folgalkozatottak_female_2019_db
+folgalkozatottak_2020_db <- folgalkozatottak_male_2020_db + folgalkozatottak_female_2020_db
+folgalkozatottak_2021_db <- folgalkozatottak_male_2021_db + folgalkozatottak_female_2021_db
+
+foglalkoztatottak_mult_df <- data.frame(folgalkozatottak_2019_db, folgalkozatottak_2020_db, folgalkozatottak_2021_db)
+colnames(foglalkoztatottak_mult_df) <- 2019:2021
+
+
+brutto_berek_mult <- matrix(nrow = 101, ncol = 3)
+brutto_berek_mult_df <- data.frame(0:100, brutto_berek_mult)
+colnames(brutto_berek_mult_df) <- c("Kor", 2019:2021)
+
+for (ev in 2019:2021) {
+  for (kor in 0:100) {
+    if (kor < 20) {
+      brutto_berek_mult_df[kor + 1, ev - 2017] = kereset[1, ev - 2017]
+    } else if (kor < 30) {
+      brutto_berek_mult_df[kor + 1, ev - 2017] = kereset[2, ev - 2017]
+    } else if (kor < 40) {
+      brutto_berek_mult_df[kor + 1, ev - 2017] = kereset[3, ev - 2017]
+    } else if (kor < 50) {
+      brutto_berek_mult_df[kor + 1, ev - 2017] = kereset[4, ev - 2017]
+    } else if (kor < 60) {
+      brutto_berek_mult_df[kor + 1, ev - 2017] = kereset[5, ev - 2017]
+    } else {
+      brutto_berek_mult_df[kor + 1, ev - 2017] = kereset[6, ev - 2017]
+    }
+  }
+} 
+
+bevetel_mult <- foglalkoztatottak_mult_df * brutto_berek_mult_df[-1] * 12
+bevetel_mult_teljes <- data.frame(bevetel_mult, osszber_korev[1])
+colnames(bevetel_mult_teljes) <- 2019:2022
+eves_bevetel_mult <- colSums(bevetel_mult_teljes)
+
+szocho_mult <- c(0.185, 0.165, 0.155, 0.13)
+szocho_mult_reszesedes <- c(0.7022, 0.7163, 0.7163, 0.7163)
+
+osszjarulek_mult <- eves_bevetel_mult * jarulek
+osszszocho_mult <- eves_bevetel_mult * szocho_mult * szocho_mult_reszesedes
+
+osszbevetel_mult <- osszjarulek_mult + osszszocho_mult
+
+#bevételi arány
+
+beveteli_arany <- 0.62
+
+beveteli_oldal <- bevetel * beveteli_arany
+
+
+
+```
+
+```{r}
+
+gdp_teny_2022 <- 66386841000000
+
+gdp_fc <- c()
+
+for (ev in 2023:2060){
+  gdp_fc[ev - 2022] <- gdp_teny_2022 * prod((1 + gdp_novekedes[2 : (ev - 2021)]))
+}
+
+
+
+
+egyenleg <- beveteli_oldal[2:39] - kiadasi_oldal
+egyenleg_gdp <- egyenleg / gdp_fc
+kiadas_gdp <- kiadasi_oldal / gdp_fc
+bevetel_gdp <- beveteli_oldal[2:39] / gdp_fc
+egyenleg_evek <- 2023:2060
+
+egyenleg_df <- data.frame(egyenleg_evek, egyenleg, egyenleg_gdp, kiadas_gdp, bevetel_gdp)
+ggplot(egyenleg_df, aes(x = egyenleg_evek, y = egyenleg)) + geom_line()
+
+ggplot(egyenleg_df, aes(x = egyenleg_evek)) + geom_line(aes(y = egyenleg_gdp, color = "Egyenleg"), size = 1.5) +
+  geom_line(aes(y = kiadas_gdp, color = "Kiadás"), size = 1.5) +
+  geom_line(aes(y = bevetel_gdp, color = "Bevétel"), size = 1.5) +
+  labs(title = "Nyugdíjrendszer egyenlegének alakulása", x = "Év", y = "Egyenleg (GDP %)") +
+  scale_y_continuous(labels = scales::percent, breaks = c(-0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4), limits = c(-0.2, 0.4)) +
+  scale_x_continuous(breaks = c(2023, 2030, 2040, 2050, 2060)) +
+  scale_color_manual(name = "Jelmagyarázat", values = c( "Kiadás" = "bisque3", "Bevétel" = "darkslategray3", "Egyenleg" = "red3"))
+
+
+```
+
+```{r}
+atlag_nyugdij_brutto_fc/brutto_berek_df[brutto_berek_df$Kor==66,][1,3:40]
+```
+
+
+
+Help a kniteléshez:
+chunk elrejtése knitelésénél: ```{r, results='hide', fig.show='hide'}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
