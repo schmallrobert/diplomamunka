@@ -2253,8 +2253,7 @@ ggplot(helyettesitesi_df) +
 
 
 
-Help a kniteléshez:
-chunk elrejtése knitelésénél: ```{r, results='hide', fig.show='hide'}
+
 
 
 
